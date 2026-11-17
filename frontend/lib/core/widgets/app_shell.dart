@@ -1,13 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:provider/single_child_widget.dart';
 
 import '../../features/applications/application_form_screen.dart';
 import '../../features/applications/dashboard_screen.dart';
 import '../../features/applications/workflow_guide_screen.dart';
+import '../../features/automation/automation_monitor_screen.dart';
 import '../../models/user_model.dart';
 import '../../services/application_service.dart';
+import '../../services/automation_service.dart';
 import '../../state/application_list_controller.dart';
 import '../../state/auth_controller.dart';
+import '../../state/automation_monitor_controller.dart';
 import '../config/app_config.dart';
 import '../theme/app_theme.dart';
 
@@ -22,10 +26,21 @@ class AppShell extends StatelessWidget {
       return const SizedBox.shrink();
     }
 
-    return ChangeNotifierProvider<ApplicationListController>(
-      create: (_) => ApplicationListController(
-        service: context.read<ApplicationService>(),
-      )..load(),
+    return MultiProvider(
+      providers: <SingleChildWidget>[
+        ChangeNotifierProvider<ApplicationListController>(
+          create: (_) => ApplicationListController(
+            service: context.read<ApplicationService>(),
+          )..load(),
+        ),
+        if (user.isCoordinator)
+          ChangeNotifierProvider<AutomationMonitorController>(
+            create: (_) => AutomationMonitorController(
+              service: context.read<AutomationService>(),
+              canManage: true,
+            )..load(),
+          ),
+      ],
       child: _AppShellView(user: user),
     );
   }
@@ -70,6 +85,16 @@ class _AppShellViewState extends State<_AppShellView> {
           icon: Icons.add_box_rounded,
           label: 'New Application',
           builder: () => const ApplicationFormScreen(),
+        ),
+      );
+    }
+
+    if (user.isCoordinator) {
+      destinations.add(
+        const _Destination(
+          icon: Icons.auto_mode_rounded,
+          label: 'Automation',
+          builder: AutomationMonitorScreen.new,
         ),
       );
     }

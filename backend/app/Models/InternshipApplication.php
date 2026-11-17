@@ -135,6 +135,11 @@ class InternshipApplication extends Model
         return $this->hasMany(ApplicationStatusLog::class)->orderBy('created_at')->orderBy('id');
     }
 
+    public function automationJobs(): HasMany
+    {
+        return $this->hasMany(AutomationJob::class)->latest('id');
+    }
+
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
         return match ($user->role) {

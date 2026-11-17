@@ -8,6 +8,7 @@ import 'core/widgets/app_shell.dart';
 import 'features/auth/login_screen.dart';
 import 'services/application_service.dart';
 import 'services/auth_service.dart';
+import 'services/automation_service.dart';
 import 'state/auth_controller.dart';
 
 void main() {
@@ -29,6 +30,9 @@ class InternshipMonitorApp extends StatelessWidget {
         ),
         Provider<ApplicationService>(
           create: (_) => ApplicationService(apiClient),
+        ),
+        Provider<AutomationService>(
+          create: (_) => AutomationService(apiClient),
         ),
         ChangeNotifierProvider<AuthController>(
           create: (BuildContext context) =>

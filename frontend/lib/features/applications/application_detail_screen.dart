@@ -13,6 +13,7 @@ import '../../models/user_model.dart';
 import '../../services/application_service.dart';
 import '../../state/application_detail_controller.dart';
 import '../../state/auth_controller.dart';
+import 'widgets/linked_automation_jobs_card.dart';
 import 'widgets/transition_dialog.dart';
 
 class ApplicationDetailScreen extends StatelessWidget {
@@ -193,6 +194,8 @@ class _ApplicationDetailView extends StatelessWidget {
               _DetailsCard(application: application),
               const SizedBox(height: 16),
               _RequirementsCard(application: application),
+              const SizedBox(height: 16),
+              LinkedAutomationJobsCard(applicationId: application.id),
               const SizedBox(height: 16),
               _AuditTrailCard(logs: application.statusLogs),
               const SizedBox(height: 8),

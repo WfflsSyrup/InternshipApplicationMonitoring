@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\ApplicationController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\AutomationController;
 use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\PartnerReviewerController;
 use Illuminate\Support\Facades\Route;
@@ -26,4 +27,11 @@ Route::middleware('auth:sanctum')->group(function (): void {
     Route::post('/applications/{application}/transition', [ApplicationController::class, 'transition']);
 
     Route::get('/partner-reviewers', [PartnerReviewerController::class, 'index']);
+
+    Route::prefix('automation')->group(function (): void {
+        Route::get('/jobs', [AutomationController::class, 'index']);
+        Route::get('/summaries/weekly', [AutomationController::class, 'weeklySummary']);
+        Route::post('/sweeps/run', [AutomationController::class, 'runSweep']);
+        Route::post('/jobs/{job}/requeue', [AutomationController::class, 'requeue']);
+    });
 });

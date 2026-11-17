@@ -4,13 +4,34 @@ namespace App\Services;
 
 use App\Exceptions\InvalidStateTransitionException;
 use App\Models\ApplicationStatusLog;
+use App\Models\AutomationJob;
 use App\Models\InternshipApplication;
 use App\Models\User;
+use App\Services\Automation\AutomationJobDraft;
+use App\Services\Automation\AutomationJobService;
 use App\Support\ApplicationStatusMachine;
+use App\Support\AutomationRecipientResolver;
 use Illuminate\Support\Facades\DB;
 
 class ApplicationWorkflowService
 {
+    /**
+     * Statuses that emit an event-driven milestone reminder.
+     *
+     * @var array<int, string>
+     */
+    public const MILESTONE_STATUSES = [
+        InternshipApplication::STATUS_SUBMITTED,
+        InternshipApplication::STATUS_ENDORSED,
+        InternshipApplication::STATUS_PARTNER_SUBMITTED,
+        InternshipApplication::STATUS_INTERVIEW_SCHEDULED,
+        InternshipApplication::STATUS_PLACEMENT_CONFIRMED,
+    ];
+
+    public function __construct(private readonly AutomationJobService $automationJobs)
+    {
+    }
+
     public function createForStudent(User $student, array $data): InternshipApplication
     {
         return DB::transaction(function () use ($student, $data): InternshipApplication {
@@ -60,7 +81,9 @@ class ApplicationWorkflowService
             $locked->status = $target;
             $locked->save();
 
-            $this->record($locked, $actor, $from, $target, $data['remarks'] ?? null);
+            $log = $this->record($locked, $actor, $from, $target, $data['remarks'] ?? null);
+
+            $this->enqueueMilestone($locked, $from, $target, $log);
 
             return $locked->load('statusLogs.actor');
         });
@@ -156,6 +179,40 @@ class ApplicationWorkflowService
             'to_status' => $to,
             'remarks' => $remarks,
         ]);
+    }
+
+    /**
+     * Week 13 milestone automation: every qualifying transition enqueues a
+     * reminder exactly once per status log entry.
+     */
+    private function enqueueMilestone(InternshipApplication $application, string $from, string $target, ApplicationStatusLog $log): void
+    {
+        if ($from === $target || ! in_array($target, self::MILESTONE_STATUSES, true)) {
+            return;
+        }
+
+        [$recipientRole, $recipientIdentifier] = AutomationRecipientResolver::forMilestone($application, $target);
+
+        $this->automationJobs->enqueue(new AutomationJobDraft(
+            type: AutomationJob::TYPE_MILESTONE_REMINDER,
+            idempotencyKey: AutomationJobService::milestoneKey(
+                (int) $application->getKey(),
+                $target,
+                $log->getKey(),
+            ),
+            applicationId: (int) $application->getKey(),
+            recipientRole: $recipientRole,
+            recipientIdentifier: $recipientIdentifier,
+            payload: [
+                'reason' => 'milestone_reached',
+                'from_status' => $from,
+                'to_status' => $target,
+                'status_log_id' => $log->getKey(),
+                'reference_code' => $application->reference_code,
+                'host_company_name' => $application->host_company_name,
+                'target_role' => $application->target_role,
+            ],
+        ));
     }
 
     private function normalizeChecklist(array $checklist): array
