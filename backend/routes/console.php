@@ -32,3 +32,19 @@ Schedule::command('internship:weekly-summary')
     ->weeklyOn(5, '17:00')
     ->timezone('Asia/Manila')
     ->withoutOverlapping();
+
+/*
+|--------------------------------------------------------------------------
+| Week 14 — Module 14 / SA8 integration hygiene (Asia/Manila)
+|--------------------------------------------------------------------------
+|
+| Consumed nonces are only replayable inside the clock-skew window, so rows
+| older than their expiry can be pruned safely. Key rotation stays manual via
+| `php artisan crypto:rotate-envelopes` so a coordinator decides when to roll.
+|
+*/
+
+Schedule::command('integration:prune-nonces')
+    ->dailyAt('02:15')
+    ->timezone('Asia/Manila')
+    ->withoutOverlapping();

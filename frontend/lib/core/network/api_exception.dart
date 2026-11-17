@@ -4,6 +4,7 @@ enum ApiErrorKind {
   unauthorized,
   forbidden,
   notFound,
+  conflict,
   validation,
   unavailable,
   server,
@@ -18,6 +19,7 @@ enum ApiErrorKind {
       401 => ApiErrorKind.unauthorized,
       403 => ApiErrorKind.forbidden,
       404 => ApiErrorKind.notFound,
+      409 => ApiErrorKind.conflict,
       422 => ApiErrorKind.validation,
       503 => ApiErrorKind.unavailable,
       _ when statusCode >= 500 => ApiErrorKind.server,
@@ -47,6 +49,8 @@ class ApiException implements Exception {
       kind == ApiErrorKind.network || kind == ApiErrorKind.timeout;
 
   bool get isRetryable => isNetworkRelated || kind == ApiErrorKind.unavailable;
+
+  bool get isReplay => kind == ApiErrorKind.conflict;
 
   List<String> errorsFor(String field) => fieldErrors[field] ?? const <String>[];
 

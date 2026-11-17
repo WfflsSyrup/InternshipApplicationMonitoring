@@ -168,7 +168,47 @@ Get-Content storage\logs\automation.log -Tail 3
 
 ---
 
-### Step 6 — Reset the demo data (optional)
+### Step 6 — Cryptographic payload protection (about 3 minutes)
+
+Module 14 / SA8 covers the sealed channel between the internship office and the industry partner:
+AES-256-GCM envelopes with a fresh 12-byte IV, AAD binding `{reference_code}|{key_id}|{direction}`,
+detached HMAC-SHA256 request signing, an atomic nonce replay store and a coordinator-only verification
+lab that proves each rejection path on purpose.
+
+Sign in as the **coordinator** and open **Crypto** in the navigation rail (desktop) or drawer (narrow).
+
+| # | Do this | Expected |
+| --- | --- | --- |
+| 1 | Open **Crypto** | Keyring & policy banner (active key `v2`, replay window `±300s`, grace keys), counters and the audit list |
+| 2 | **Seal & Dispatch** → pick `INT-2026-0003` (partner submitted) → **Seal & Dispatch** | Snack bar with the new envelope; card shows `Verified`, `Outbound partner packet`, key `v2`, `sha256:` prefix |
+| 3 | **Verification Lab** → *Valid callback* → **Run Verification** | Result card: `Accepted · HTTP 200`, all steps `verified` |
+| 4 | **Verification Lab** → *Tampered ciphertext* | `Rejected · rejected_tamper · HTTP 422`, the AES-256-GCM tag catches the flip |
+| 5 | **Verification Lab** → *Forged signature* | `Rejected · rejected_signature · HTTP 401` |
+| 6 | **Verification Lab** → *Replay attack* (twice) | First `Accepted`, second `Rejected · rejected_replay · HTTP 409` from the nonce store |
+| 7 | **Verification Lab** → *Expired timestamp* | `Rejected · rejected_expired · HTTP 401` from the ±300s skew check |
+
+The lab is gated by `CRYPTO_ALLOW_TAMPER_SIMULATION=true` in `backend\.env`; production must keep it
+`false`, which makes `POST /integrations/verify-simulation` return `503`. The keyring endpoint never
+returns key material — it reports the active key id, supported grace keys and envelope totals only.
+
+Key material lives in `backend\.env` as base64 256-bit values and is **never** shipped to the client:
+
+```powershell
+cd "C:\Users\Jeremy Jay\flutter_projects\InternshipMonitoring\backend"
+[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
+php artisan crypto:rotate-envelopes --dry-run   # plan a v2 -> v3 rotation
+php artisan crypto:rotate-envelopes             # re-seal every active envelope
+php artisan integration:prune-nonces            # drop expired nonce rows (daily 02:15)
+```
+
+The public partner webhook is `POST /api/v1/integrations/partner-callbacks/outcome`; it accepts the
+`X-Key-Id`, `X-Timestamp`, `X-Nonce` and `X-Signature-256` headers and rejects anything that fails the
+signature, skew, replay or AAD checks. Valid callbacks transition the application through the normal
+workflow service, so the crypto layer never writes state directly.
+
+---
+
+### Step 7 — Reset the demo data (optional)
 
 `migrate:fresh` **deletes all data** and reseeds the controlled demo set:
 
@@ -203,6 +243,10 @@ Seeded records:
 | Yellow-black overflow stripes in a narrow window | Header/actions were a single `Row`, and state panels had no scroll fallback | Header uses `Wrap`; `StatePanel` scrolls when space is short |
 | Sweep returns `422` "fault injection is disabled" | `AUTOMATION_ALLOW_FAULT_INJECTION` is `false` | Set it to `true` in `backend\.env`, then restart `php artisan serve` |
 | Sweep reports `duplicates_skipped` instead of `enqueued` | The job for that day / ISO week already exists | Expected: sweeps are idempotent. Clear `automation_jobs` to force a fresh run |
+| **Seal & Dispatch** returns `503` | No `CRYPTO_KEY_*` values are set | Generate base64 256-bit keys and fill `CRYPTO_KEY_V2_ENC` / `CRYPTO_KEY_V2_SIG` in `backend\.env` |
+| **Verification Lab** returns `503` | `CRYPTO_ALLOW_TAMPER_SIMULATION` is `false` | Set it to `true` in `backend\.env`, restart `php artisan serve` |
+| Partner callback returns `409 rejected_replay` | The nonce was already delivered | Expected: replay protection. Re-issue the request with a fresh nonce and timestamp |
+| Partner callback returns `401 rejected_expired` | Client clock differs from the server by more than `CRYPTO_CLOCK_SKEW_SECONDS` | Sync the clock; the window is ±300s by default |
 
 ---
 
@@ -228,6 +272,12 @@ Seeded records:
 | `AUTOMATION_FALLBACK_RECIPIENT` | `coord.demo@uls-test.edu.ph` | Recipient when resolution fails |
 | `AUTOMATION_INCOMPLETE_AFTER_HOURS` / `AUTOMATION_STALLED_AFTER_DAYS` | `48` / `5` | Sweep thresholds |
 | `AUTOMATION_SWEEP_DISPATCH_LIMIT` | `50` | Max pending jobs dispatched per run |
+| `CRYPTO_ACTIVE_KID` | `v2` | Key id used for new seals and for AAD binding |
+| `CRYPTO_KEY_V1_ENC` / `CRYPTO_KEY_V1_SIG` | *(empty in `.env.example`)* | Base64 256-bit AES + HMAC key for grace id `v1` |
+| `CRYPTO_KEY_V2_ENC` / `CRYPTO_KEY_V2_SIG` | *(empty in `.env.example`)* | Base64 256-bit AES + HMAC key for the active id |
+| `CRYPTO_CLOCK_SKEW_SECONDS` | `300` | Accepted timestamp window; outside → `401 rejected_expired` |
+| `CRYPTO_NONCE_TTL_SECONDS` | `900` | Retention for `used_integration_nonces` rows |
+| `CRYPTO_ALLOW_TAMPER_SIMULATION` | `false` | Enables the coordinator verification lab; keep `false` in production |
 
 ### Frontend (`frontend`)
 
@@ -250,19 +300,19 @@ memory for the session only.
 ### Automated tests
 
 ```powershell
-# backend — 28 feature tests (workflow, RBAC, validation, automation, error envelopes)
+# backend — 47 feature tests (workflow, RBAC, validation, automation, crypto, error envelopes)
 cd backend
 php artisan test
 
 # frontend — static analysis, widget tests, release build
 cd frontend
 flutter analyze
-flutter test          # login screen, shell layouts at 1280px/420px, automation monitor
+flutter test          # login, shell layouts 1280px/420px, automation monitor, crypto integration
 flutter build web --release
 ```
 
-All three pass on the current codebase: **28 backend tests / 185 assertions** and **7 Flutter
-widget tests**. The project is created with `--platforms=web` only, so `flutter build apk` is not
+All three pass on the current codebase: **47 backend tests / 381 assertions** and **11 Flutter widget
+tests**. The project is created with `--platforms=web` only, so `flutter build apk` is not
 available — Flutter Web is the deliverable target.
 
 ### Adverse-path checklist
@@ -275,6 +325,10 @@ available — Flutter Web is the deliverable target.
 | `403` | Student opens another student's record; non-coordinator calls `/partner-reviewers` | "Access Denied" panel, no crash |
 | Network offline | Stop `php artisan serve`, press **Retry Connection** | "Cannot reach the backend API" card |
 | `503` | Stop MySQL, then `GET /api/v1/health` | `503` + "Service temporarily unavailable" |
+| `401 rejected_signature` | Verification lab → *Forged signature* | "Rejected · rejected_signature · HTTP 401", envelope row with the rejection reason |
+| `422 rejected_tamper` | Verification lab → *Tampered ciphertext* | "Rejected · rejected_tamper · HTTP 422" from the GCM tag check |
+| `409 rejected_replay` | Verification lab → *Replay attack* twice | Second attempt "Rejected · rejected_replay · HTTP 409" from the nonce store |
+| `401 rejected_expired` | Verification lab → *Expired timestamp* | "Rejected · rejected_expired · HTTP 401" from the ±300s skew check |
 
 ---
 
@@ -302,6 +356,11 @@ Every response uses one envelope:
 | GET | `/api/v1/automation/summaries/weekly` | token, role-scoped | Latest succeeded weekly summary payload |
 | POST | `/api/v1/automation/sweeps/run` | coordinator | Run a controlled sweep (`type`, optional `fault_mode`) |
 | POST | `/api/v1/automation/jobs/{job}/requeue` | coordinator | Recovery requeue (`recipient_identifier`, `remarks`) |
+| GET | `/api/v1/integrations/envelopes` | token, role-scoped | Crypto envelope metadata (`?status=`, `?direction=`, `?application_id=`) |
+| GET | `/api/v1/integrations/keyring/status` | coordinator | Active key id, grace keys, policy — no key material |
+| POST | `/api/v1/integrations/partner-packets/dispatch` | coordinator | Seal and persist an outbound partner packet |
+| POST | `/api/v1/integrations/partner-callbacks/outcome` | public (signed) | Inbound partner webhook (60/min) |
+| POST | `/api/v1/integrations/verify-simulation` | coordinator | Controlled rejection-path lab (`503` when disabled) |
 
 Listing scope: coordinators see everything, students see their own, advisers see assigned
 applications plus same-department students, partner reviewers see their assigned applications
@@ -406,31 +465,73 @@ stripped, so a job card never leaks credentials. Requeue body:
 
 ---
 
+### Cryptographic envelopes (Week 14 / Module 14 · SA8)
+
+Sealing lives in `app/Services/Crypto/EnvelopeCryptoService.php` and is the only writer of
+`secure_integration_envelopes` rows. Ciphertext, IV and tags are stored in the database but never
+returned by the API — `GET /integrations/envelopes` returns metadata only.
+
+| Aspect | Implementation |
+| --- | --- |
+| Cipher | AES-256-GCM, fresh 12-byte IV per seal |
+| AAD | `{reference_code}\|{key_id}\|{direction}` — re-checked after decryption |
+| Signature | HMAC-SHA256 over `{METHOD}\n{PATH}\n{TS}\n{NONCE}\n{KEY_ID}\n{SHA256_HEX(body)}` |
+| Headers | `X-Key-Id`, `X-Timestamp`, `X-Nonce`, `X-Signature-256: sha256=<hex>` |
+| Replay | `used_integration_nonces` UNIQUE insert; second delivery → `409 rejected_replay` |
+| Skew | ±`CRYPTO_CLOCK_SKEW_SECONDS` (300s); outside → `401 rejected_expired` |
+| Comparison | `hash_equals` for both signature and post-decrypt AAD |
+| Keyring | `CRYPTO_KEY_V1_ENC/SIG` + `CRYPTO_KEY_V2_ENC/SIG`, active id `CRYPTO_ACTIVE_KID` |
+
+| Envelope status | Meaning |
+| --- | --- |
+| `verified` | Signature, skew, nonce and GCM tag all passed |
+| `rejected_signature` | `401` — HMAC mismatch (forged or unknown key) |
+| `rejected_tamper` | `422` — GCM authentication tag failed |
+| `rejected_replay` | `409` — nonce already consumed |
+| `rejected_expired` | `401` — timestamp outside the skew window |
+
+Rejection reasons are recorded on the envelope row with a `SIM-` prefixed `correlation_id` when
+produced by the verification lab, so a demonstration never looks like a production callback. The lab
+is coordinator-only and gated by `CRYPTO_ALLOW_TAMPER_SIMULATION`; outbound dispatch records
+`replay_checked = false` because it never consumes a nonce.
+
+---
+
 ## Repository layout
 
 ```text
 InternshipMonitoring/
 ├── backend/      # Laravel REST API
 │   ├── app/
-│   │   ├── Console/Commands/{SweepIncompleteCommand, SweepStalledCommand, WeeklySummaryCommand}.php
+│   │   ├── Console/Commands/{SweepIncompleteCommand, SweepStalledCommand, WeeklySummaryCommand,
+│   │   │            CryptoRotateEnvelopesCommand, PruneIntegrationNoncesCommand}.php
 │   │   ├── Http/{Controllers/Api/V1, Requests, Resources}/
-│   │   ├── Models/{User, InternshipApplication, ApplicationStatusLog, AutomationJob}.php
-│   │   ├── Policies/{InternshipApplicationPolicy, AutomationJobPolicy}.php
+│   │   ├── Models/{User, InternshipApplication, ApplicationStatusLog, AutomationJob,
+│   │   │          SecureIntegrationEnvelope, UsedIntegrationNonce}.php
+│   │   ├── Policies/{InternshipApplicationPolicy, AutomationJobPolicy,
+│   │   │            SecureIntegrationEnvelopePolicy}.php
 │   │   ├── Services/{ApplicationWorkflowService, Automation/{AutomationJobService,
-│   │   │            AutomationDispatcherService, AutomationSweepService}}.php
+│   │   │            AutomationDispatcherService, AutomationSweepService},
+│   │   │            Crypto/EnvelopeCryptoService}.php
 │   │   ├── Support/{ApiResponse, ApiExceptionRenderer, ApplicationStatusMachine,
-│   │   │          Automation/{LogSanitizer, AutomationRecipientResolver}}.php
-│   │   └── Exceptions/InvalidStateTransitionException.php
-│   ├── config/automation.php
+│   │   │          Automation/{LogSanitizer, AutomationRecipientResolver},
+│   │   │          Crypto/CryptoLogSanitizer}.php
+│   │   └── Exceptions/{InvalidStateTransitionException, Crypto/{CryptoConfigurationException,
+│   │              CryptoVerificationException}}.php
+│   ├── config/{automation.php, crypto.php}
 │   ├── database/{migrations,seeders,factories}/
 │   ├── routes/{api.php, console.php}
-│   └── tests/Feature/{InternshipApplicationWorkflowTest, Week13AutomationWorkflowTest}.php
+│   └── tests/Feature/{InternshipApplicationWorkflowTest, Week13AutomationWorkflowTest,
+│           Week14CryptographicIntegrationTest}.php
 ├── frontend/     # Flutter Web client
 │   └── lib/
 │       ├── core/{config, network, theme, utils, widgets}/
-│       ├── features/{auth, applications, automation}/
-│       ├── models/{automation_job_model, automation_sweep_result}.dart
-│       ├── services/  state/
+│       ├── features/{auth, applications, automation, crypto}/
+│       ├── models/{automation_job_model, automation_sweep_result, crypto_envelope_model,
+│       │           crypto_keyring_model, crypto_simulation_result}.dart
+│       ├── services/{application_service, auth_service, automation_service, crypto_service}.dart
+│       ├── state/{auth_controller, application_list_controller, application_detail_controller,
+│       │          automation_monitor_controller, crypto_integration_controller}.dart
 │       └── main.dart
 └── README.md
 ```
@@ -458,6 +559,12 @@ manual-review-required job badges, an actionable "no jobs yet" empty state with 
 inline "linked automation jobs could not be loaded" retry card on the application detail page, and a
 "fault injection is disabled in this environment" `422` notice surfaced through the Snack bar.
 
+The **Crypto** screen (open to every role, actions coordinator-only) adds its own states: verified /
+rejected-signature / rejected-tamper / rejected-replay / rejected-expired badges, a keyring policy
+banner with a "verification lab disabled" warning when `CRYPTO_ALLOW_TAMPER_SIMULATION=false`, a
+"key material exposure" danger note, a read-only notice for non-coordinators, and an inline
+"cryptographic envelopes could not be loaded" retry card on the application detail page.
+
 ---
 
 ## Deliberate scope boundary
@@ -465,12 +572,12 @@ inline "linked automation jobs could not be loaded" retry card on the applicatio
 **Implemented now:** Sanctum token authentication, policy-based RBAC, the complete bounded
 lifecycle with an append-only audit trail, standardized JSON envelopes with safe exception
 rendering, a controlled anonymized seeder, scheduled automation sweeps with bounded retries and
-coordinator recovery (Week 13 / Module 13 · SA7), and the responsive Flutter Web client with all
-eight mandatory UI states.
+coordinator recovery (Week 13 / Module 13 · SA7), AES-256-GCM payload protection with detached
+HMAC-SHA256 request signing and replay protection (Week 14 / Module 14 · SA8), and the responsive
+Flutter Web client with all eight mandatory UI states.
 
-**Intentionally deferred (Week 14–18):** an external queue daemon in front of the DB-backed job
-table, AES/HMAC payload encryption wrappers, k6 / JMeter load scripts, OpenAPI YAML generation, and
-UAT report templates.
+**Intentionally deferred (Week 15–18):** an external queue daemon in front of the DB-backed job
+table, k6 / JMeter load scripts, OpenAPI YAML generation, and UAT report templates.
 
 Each can be added without refactoring: the dispatcher already writes to a structured log or an HTTP
 endpoint selected by `AUTOMATION_DISPATCHER_MODE`, payload wrapping fits between `ApiClient` and

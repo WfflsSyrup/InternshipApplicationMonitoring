@@ -6,12 +6,15 @@ import '../../features/applications/application_form_screen.dart';
 import '../../features/applications/dashboard_screen.dart';
 import '../../features/applications/workflow_guide_screen.dart';
 import '../../features/automation/automation_monitor_screen.dart';
+import '../../features/crypto/crypto_integration_screen.dart';
 import '../../models/user_model.dart';
 import '../../services/application_service.dart';
 import '../../services/automation_service.dart';
+import '../../services/crypto_service.dart';
 import '../../state/application_list_controller.dart';
 import '../../state/auth_controller.dart';
 import '../../state/automation_monitor_controller.dart';
+import '../../state/crypto_integration_controller.dart';
 import '../config/app_config.dart';
 import '../theme/app_theme.dart';
 
@@ -40,6 +43,12 @@ class AppShell extends StatelessWidget {
               canManage: true,
             )..load(),
           ),
+        ChangeNotifierProvider<CryptoIntegrationController>(
+          create: (_) => CryptoIntegrationController(
+            service: context.read<CryptoService>(),
+            canManage: user.isCoordinator,
+          )..load(),
+        ),
       ],
       child: _AppShellView(user: user),
     );
@@ -98,6 +107,14 @@ class _AppShellViewState extends State<_AppShellView> {
         ),
       );
     }
+
+    destinations.add(
+      const _Destination(
+        icon: Icons.lock_rounded,
+        label: 'Crypto',
+        builder: CryptoIntegrationScreen.new,
+      ),
+    );
 
     destinations.add(
       const _Destination(

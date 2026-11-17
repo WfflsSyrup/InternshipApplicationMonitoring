@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use App\Exceptions\Crypto\CryptoConfigurationException;
+use App\Exceptions\Crypto\CryptoVerificationException;
 use App\Exceptions\InvalidStateTransitionException;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -45,6 +47,22 @@ class ApiExceptionRenderer
 
         if ($e instanceof InvalidStateTransitionException) {
             return [422, $e->getMessage(), ['status' => [$e->getMessage()]]];
+        }
+
+        if ($e instanceof CryptoVerificationException) {
+            return [
+                $e->status(),
+                $e->getMessage(),
+                [$e->reasonCode() => [$e->getMessage()]],
+            ];
+        }
+
+        if ($e instanceof CryptoConfigurationException) {
+            return [
+                503,
+                'Cryptographic keyring is not configured for this environment.',
+                ['crypto' => [$e->getMessage()]],
+            ];
         }
 
         if ($e instanceof AuthenticationException) {

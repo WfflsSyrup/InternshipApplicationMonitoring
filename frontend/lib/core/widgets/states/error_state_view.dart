@@ -78,6 +78,15 @@ class ErrorStateView extends StatelessWidget {
         message: 'The requested record does not exist or is no longer available.',
         accent: AppColors.warning,
       ),
+      ApiErrorKind.conflict => const ErrorPresentation(
+        icon: Icons.lock_clock_rounded,
+        title: 'Replay protection rejected the request',
+        message:
+            'This request reuses a nonce that was already processed, so it was '
+            'rejected before decryption. Re-issue the signed request with a '
+            'fresh nonce and timestamp.',
+        accent: AppColors.warning,
+      ),
       ApiErrorKind.validation => ErrorPresentation(
         icon: Icons.error_outline_rounded,
         title: 'Some fields need attention',
