@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\ApplicationStatusLog;
 use App\Models\InternshipApplication;
+use App\Models\SecurityAuditEvent;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
@@ -43,7 +44,7 @@ class InternshipApplicationWorkflowTest extends TestCase
         $this->assertSame($user->getKey(), $response->json('data.user.id'));
     }
 
-    public function test_login_with_invalid_credentials_returns_422(): void
+    public function test_login_with_invalid_credentials_returns_uniform_401(): void
     {
         User::factory()->student()->create([
             'email' => 'student1.demo@uls-test.edu.ph',
@@ -53,9 +54,16 @@ class InternshipApplicationWorkflowTest extends TestCase
         $this->postJson('/api/v1/auth/login', [
             'email' => 'student1.demo@uls-test.edu.ph',
             'password' => 'WrongPassword123',
-        ])->assertStatus(422)
+        ])->assertStatus(401)
             ->assertJsonPath('success', false)
-            ->assertJsonStructure(['errors' => ['email' => []]]);
+            ->assertJsonPath('message', 'Invalid credentials provided.')
+            ->assertJsonPath('data', null)
+            ->assertJsonPath('errors', null);
+
+        $this->assertDatabaseHas('security_audit_events', [
+            'event_type' => SecurityAuditEvent::EVENT_LOGIN_FAILED,
+            'http_status' => 401,
+        ]);
     }
 
     public function test_unauthenticated_request_returns_401_envelope(): void

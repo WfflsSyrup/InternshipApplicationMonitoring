@@ -6,16 +6,28 @@ use App\Http\Controllers\Api\V1\AutomationController;
 use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\PartnerReviewerController;
 use App\Http\Controllers\Api\V1\SecureIntegrationController;
+use App\Http\Controllers\Api\V1\SecurityAuditController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', [HealthController::class, 'show'])->name('health');
 
+/*
+|--------------------------------------------------------------------------
+| Week 15 — Module 15 / SA9 authentication (tiered rate limiting)
+|--------------------------------------------------------------------------
+|
+| auth-login: 5/min per e-mail + client address.
+| api-standard: 60/min per authenticated user (or address when anonymous).
+|
+*/
+
 Route::prefix('auth')->group(function (): void {
     Route::post('/login', [AuthController::class, 'login'])
-        ->middleware('throttle:6,1');
+        ->middleware('throttle:auth-login');
 
-    Route::middleware('auth:sanctum')->group(function (): void {
+    Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function (): void {
         Route::post('/logout', [AuthController::class, 'logout']);
+        Route::post('/revoke-all', [AuthController::class, 'revokeAll']);
         Route::get('/me', [AuthController::class, 'me']);
     });
 });
@@ -27,13 +39,14 @@ Route::prefix('auth')->group(function (): void {
 |
 | Authenticated by the integration headers instead of a bearer token:
 | X-Key-Id, X-Timestamp, X-Nonce and X-Signature-256, then AES-256-GCM.
+| integration-webhook: 30/min per key id + client address.
 |
 */
 
 Route::post('/integrations/partner-callbacks/outcome', [SecureIntegrationController::class, 'partnerCallback'])
-    ->middleware('throttle:60,1');
+    ->middleware('throttle:integration-webhook');
 
-Route::middleware('auth:sanctum')->group(function (): void {
+Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function (): void {
     Route::get('/applications', [ApplicationController::class, 'index']);
     Route::post('/applications', [ApplicationController::class, 'store']);
     Route::get('/applications/{application}', [ApplicationController::class, 'show']);
@@ -54,5 +67,13 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::get('/keyring/status', [SecureIntegrationController::class, 'keyringStatus']);
         Route::post('/partner-packets/dispatch', [SecureIntegrationController::class, 'dispatchPartnerPacket']);
         Route::post('/verify-simulation', [SecureIntegrationController::class, 'verifySimulation']);
+    });
+
+    /*
+    | Week 15 — Module 15 / SA9 security telemetry (coordinator only).
+    */
+    Route::prefix('security')->group(function (): void {
+        Route::get('/audit-events', [SecurityAuditController::class, 'index']);
+        Route::get('/posture', [SecurityAuditController::class, 'posture']);
     });
 });

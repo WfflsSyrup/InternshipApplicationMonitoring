@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Middleware\PayloadSizeAndSanitizationMiddleware;
+use App\Http\Middleware\SecurityHeadersMiddleware;
 use App\Support\ApiExceptionRenderer;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -15,6 +17,12 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->redirectGuestsTo(null);
+
+        // Week 15 — Module 15 / SA9: hardening runs before any controller.
+        $middleware->api(prepend: [
+            SecurityHeadersMiddleware::class,
+            PayloadSizeAndSanitizationMiddleware::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

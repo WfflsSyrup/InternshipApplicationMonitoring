@@ -10,6 +10,7 @@ import 'package:internship_monitor/models/user_model.dart';
 import 'package:internship_monitor/services/application_service.dart';
 import 'package:internship_monitor/services/auth_service.dart';
 import 'package:internship_monitor/services/crypto_service.dart';
+import 'package:internship_monitor/services/security_service.dart';
 import 'package:internship_monitor/state/auth_controller.dart';
 
 class _FakeAuthService extends AuthService {
@@ -43,6 +44,7 @@ Future<void> _pumpShell(WidgetTester tester, Size size) async {
         Provider<ApiClient>(create: (_) => ApiClient()),
         Provider<AuthService>(create: (_) => _FakeAuthService()),
         Provider<CryptoService>(create: (_) => CryptoService(ApiClient())),
+        Provider<SecurityService>(create: (_) => SecurityService(ApiClient())),
         Provider<ApplicationService>(
           create: (BuildContext context) =>
               ApplicationService(context.read<ApiClient>()),

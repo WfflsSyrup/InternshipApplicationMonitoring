@@ -42,4 +42,14 @@ class AuthService {
       _client.clearToken();
     }
   }
+
+  /// Week 15 — Module 15 / SA9: deletes every personal access token of the
+  /// authenticated user, then clears the local bearer token.
+  Future<void> revokeAllSessions() async {
+    try {
+      await _client.post('/auth/revoke-all');
+    } finally {
+      _client.clearToken();
+    }
+  }
 }

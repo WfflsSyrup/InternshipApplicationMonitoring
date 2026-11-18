@@ -7,15 +7,19 @@ import '../../features/applications/dashboard_screen.dart';
 import '../../features/applications/workflow_guide_screen.dart';
 import '../../features/automation/automation_monitor_screen.dart';
 import '../../features/crypto/crypto_integration_screen.dart';
+import '../../features/security/security_audit_screen.dart';
 import '../../models/user_model.dart';
 import '../../services/application_service.dart';
 import '../../services/automation_service.dart';
 import '../../services/crypto_service.dart';
+import '../../services/security_service.dart';
 import '../../state/application_list_controller.dart';
 import '../../state/auth_controller.dart';
 import '../../state/automation_monitor_controller.dart';
 import '../../state/crypto_integration_controller.dart';
+import '../../state/security_audit_controller.dart';
 import '../config/app_config.dart';
+import '../network/api_exception.dart';
 import '../theme/app_theme.dart';
 
 class AppShell extends StatelessWidget {
@@ -48,6 +52,12 @@ class AppShell extends StatelessWidget {
             service: context.read<CryptoService>(),
             canManage: user.isCoordinator,
           )..load(),
+        ),
+        ChangeNotifierProvider<SecurityAuditController>(
+          create: (_) => SecurityAuditController(
+            service: context.read<SecurityService>(),
+            canManage: user.isCoordinator,
+          ),
         ),
       ],
       child: _AppShellView(user: user),
@@ -116,6 +126,16 @@ class _AppShellViewState extends State<_AppShellView> {
       ),
     );
 
+    if (user.isCoordinator) {
+      destinations.add(
+        const _Destination(
+          icon: Icons.shield_rounded,
+          label: 'Security',
+          builder: SecurityAuditScreen.new,
+        ),
+      );
+    }
+
     destinations.add(
       const _Destination(
         icon: Icons.account_tree_rounded,
@@ -161,6 +181,62 @@ class _AppShellViewState extends State<_AppShellView> {
     }
   }
 
+  /// Week 15 — Module 15 / SA9: global session revocation.
+  Future<void> _confirmRevokeAllSessions(BuildContext shellContext) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: shellContext,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Revoke all sessions?'),
+          content: const Text(
+            'Every personal access token issued for your account is deleted '
+            'immediately, including the token used by this device. You will be '
+            'signed out and must sign in again on every device.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              icon: const Icon(Icons.sensors_off_rounded, size: 18),
+              label: const Text('Revoke All'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true || !shellContext.mounted) {
+      return;
+    }
+
+    final AuthController auth = shellContext.read<AuthController>();
+
+    await auth.revokeAllSessions();
+
+    if (!shellContext.mounted) {
+      return;
+    }
+
+    final ApiException? failure = auth.error;
+
+    if (failure == null) {
+      return;
+    }
+
+    ScaffoldMessenger.of(shellContext).showSnackBar(
+      SnackBar(
+        content: Text('Sessions could not be revoked: ${failure.message}'),
+        backgroundColor: AppColors.danger,
+        duration: const Duration(seconds: 6),
+      ),
+    );
+
+    auth.clearError();
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<_Destination> destinations = _destinationsFor(widget.user);
@@ -199,6 +275,8 @@ class _AppShellViewState extends State<_AppShellView> {
                   child: _UserPanel(
                     user: widget.user,
                     onLogout: _confirmLogout,
+                    onRevokeAllSessions: () =>
+                        _confirmRevokeAllSessions(context),
                   ),
                 ),
               ),
@@ -254,6 +332,10 @@ class _AppShellViewState extends State<_AppShellView> {
                 onLogout: () async {
                   Navigator.of(context).pop();
                   await _confirmLogout();
+                },
+                onRevokeAllSessions: () async {
+                  Navigator.of(context).pop();
+                  await _confirmRevokeAllSessions(context);
                 },
               ),
             ],
@@ -322,10 +404,15 @@ class _BrandMark extends StatelessWidget {
 }
 
 class _UserPanel extends StatelessWidget {
-  const _UserPanel({required this.user, required this.onLogout});
+  const _UserPanel({
+    required this.user,
+    required this.onLogout,
+    required this.onRevokeAllSessions,
+  });
 
   final UserModel user;
   final Future<void> Function() onLogout;
+  final Future<void> Function() onRevokeAllSessions;
 
   @override
   Widget build(BuildContext context) {
@@ -374,6 +461,12 @@ class _UserPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onRevokeAllSessions,
+            icon: const Icon(Icons.sensors_off_rounded, size: 18),
+            label: const Text('Revoke All Sessions'),
+          ),
+          const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: onLogout,
             icon: const Icon(Icons.logout_rounded, size: 18),

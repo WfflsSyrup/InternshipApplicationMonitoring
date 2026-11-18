@@ -92,6 +92,13 @@ Chrome opens at `http://localhost:<random-port>`. If you changed the API port:
 flutter run -d chrome --dart-define=API_BASE_URL=http://127.0.0.1:8010/api/v1
 ```
 
+The API only answers browser origins listed in `CORS_ALLOWED_ORIGINS`. When Chrome picks an
+unexpected port, pin the web port so the request is accepted:
+
+```powershell
+flutter run -d chrome --web-port 5000 --dart-define=API_BASE_URL=http://127.0.0.1:8000/api/v1
+```
+
 ---
 
 ### Step 3 — Sign in with a demo account
@@ -208,7 +215,66 @@ workflow service, so the crypto layer never writes state directly.
 
 ---
 
-### Step 7 — Reset the demo data (optional)
+### Step 7 — Security hardening & audit trail (about 3 minutes)
+
+Module 15 / SA9 turns the API into an OWASP API Top 10 hardened surface and exposes the telemetry
+that proves it. Nothing here changes the business workflow; it only guards the boundary.
+
+Sign in as the **coordinator** and open **Security** in the navigation rail (desktop) or drawer
+(narrow).
+
+| # | Do this | Expected |
+| --- | --- | --- |
+| 1 | Open **Security** | Hardening posture card with green chips: strict CORS, 6 security headers, 64 KB cap, 60-min token TTL, tiered rate limiting |
+| 2 | Watch the counters | Audit events / high severity / login failures / token TTL |
+| 3 | Try a wrong password on the login screen 6 times | Attempts 1–5 return a uniform `401 Invalid credentials provided.`; attempt 6 returns `429` with `Retry-After` and a "Too many requests" recovery card |
+| 4 | Reopen **Security** | New `Login Failed` and `Rate Limit Exceeded` cards with severity badges, endpoint, `ip` prefix and timestamp |
+| 5 | Filter by `Mass Assignment Blocked` or `Payload Too Large` | Only matching events remain (chips re-query the API) |
+| 6 | Open the user menu → **Revoke All Sessions** → **Revoke All** | Confirmation dialog, then every token is deleted and the app returns to the login screen |
+
+Response headers added to every `/api/v1/*` reply:
+
+| Header | Value |
+| --- | --- |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Permissions-Policy` | `geolocation=(), camera=(), microphone=()` |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'` |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` |
+
+Tiered rate limits (per minute):
+
+| Limiter | Bucket | Default |
+| --- | --- | --- |
+| `auth-login` | e-mail + client address | 5 |
+| `api-standard` | authenticated user (address when anonymous) | 60 |
+| `integration-webhook` | `X-Key-Id` + client address | 30 |
+
+Audit event types written to `security_audit_events` **and** to the single-line JSON
+`storage/logs/security_hardening.log`:
+
+`bola_blocked`, `bfla_blocked`, `rate_limit_exceeded`, `mass_assignment_blocked`,
+`payload_too_large`, `login_failed`, `session_revoked`.
+
+Client addresses are never stored: only `hash_hmac('sha256', $ip, APP_KEY)` is persisted, and the
+API exposes just a 12-character prefix. Passwords, tokens and crypto key material are redacted by the
+service before they can reach either sink.
+
+Run the Flutter web build on an allowed origin, for example:
+
+```powershell
+cd "C:\Users\Jeremy Jay\flutter_projects\InternshipMonitoring\frontend"
+flutter run -d chrome --web-port 5000 --dart-define=API_BASE_URL=http://127.0.0.1:8010/api/v1
+```
+
+`CORS_ALLOWED_ORIGINS` is an explicit allowlist (`http://localhost:5000`,
+`http://127.0.0.1:5000`, `http://localhost:8080`, `http://127.0.0.1:8080`). Add the exact origin of
+the browser tab, or keep a localhost-only `*` pattern while developing.
+
+---
+
+### Step 8 — Reset the demo data (optional)
 
 `migrate:fresh` **deletes all data** and reseeds the controlled demo set:
 
@@ -247,6 +313,11 @@ Seeded records:
 | **Verification Lab** returns `503` | `CRYPTO_ALLOW_TAMPER_SIMULATION` is `false` | Set it to `true` in `backend\.env`, restart `php artisan serve` |
 | Partner callback returns `409 rejected_replay` | The nonce was already delivered | Expected: replay protection. Re-issue the request with a fresh nonce and timestamp |
 | Partner callback returns `401 rejected_expired` | Client clock differs from the server by more than `CRYPTO_CLOCK_SKEW_SECONDS` | Sync the clock; the window is ±300s by default |
+| Browser reports a CORS error | The page origin is not in `CORS_ALLOWED_ORIGINS` | Add the exact origin (scheme + host + port) in `backend\.env`, then restart `php artisan serve` |
+| Every request returns `413` | `SECURITY_MAX_PAYLOAD_KB` is too small for the payload | Raise it in `backend\.env` (default 64 KB) or shrink the payload |
+| Login shows "Too many requests" | 6th attempt within a minute from the same e-mail | Expected: `auth-login` allows 5/min. Wait for `Retry-After` |
+| Security screen is empty for a coordinator | No audit events recorded yet, or a 403/429 never happened | Trigger one (wrong password, cross-student open) and refresh |
+| Security screen shows no posture card | The coordinator call to `/security/posture` failed | Check `APP_DEBUG` (posture reports it) and the API console for a `403`/`503` |
 
 ---
 
@@ -278,6 +349,13 @@ Seeded records:
 | `CRYPTO_CLOCK_SKEW_SECONDS` | `300` | Accepted timestamp window; outside → `401 rejected_expired` |
 | `CRYPTO_NONCE_TTL_SECONDS` | `900` | Retention for `used_integration_nonces` rows |
 | `CRYPTO_ALLOW_TAMPER_SIMULATION` | `false` | Enables the coordinator verification lab; keep `false` in production |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:8080,http://127.0.0.1:8080,http://localhost:5000` | Explicit browser allowlist; `*` is not accepted |
+| `SANCTUM_TOKEN_EXPIRATION_MINUTES` | `60` | Personal access token lifetime |
+| `SECURITY_MAX_PAYLOAD_KB` | `64` | Request body cap → `413` when exceeded |
+| `SECURITY_SANITIZE_INPUT` | `true` | Trim, strip null bytes and HTML/script tags (crypto fields exempt) |
+| `SECURITY_AUTH_LOGIN_PER_MIN` | `5` | `auth-login` limiter |
+| `SECURITY_API_STANDARD_PER_MIN` | `60` | `api-standard` limiter |
+| `SECURITY_WEBHOOK_PER_MIN` | `30` | `integration-webhook` limiter |
 
 ### Frontend (`frontend`)
 
@@ -300,18 +378,18 @@ memory for the session only.
 ### Automated tests
 
 ```powershell
-# backend — 47 feature tests (workflow, RBAC, validation, automation, crypto, error envelopes)
+# backend — 55 feature tests (workflow, RBAC, validation, automation, crypto, OWASP hardening)
 cd backend
 php artisan test
 
 # frontend — static analysis, widget tests, release build
 cd frontend
 flutter analyze
-flutter test          # login, shell layouts 1280px/420px, automation monitor, crypto integration
+flutter test          # login, shell layouts 1280px/420px, automation, crypto, security audit
 flutter build web --release
 ```
 
-All three pass on the current codebase: **47 backend tests / 381 assertions** and **11 Flutter widget
+All three pass on the current codebase: **55 backend tests / 473 assertions** and **15 Flutter widget
 tests**. The project is created with `--platforms=web` only, so `flutter build apk` is not
 available — Flutter Web is the deliverable target.
 
@@ -329,6 +407,12 @@ available — Flutter Web is the deliverable target.
 | `422 rejected_tamper` | Verification lab → *Tampered ciphertext* | "Rejected · rejected_tamper · HTTP 422" from the GCM tag check |
 | `409 rejected_replay` | Verification lab → *Replay attack* twice | Second attempt "Rejected · rejected_replay · HTTP 409" from the nonce store |
 | `401 rejected_expired` | Verification lab → *Expired timestamp* | "Rejected · rejected_expired · HTTP 401" from the ±300s skew check |
+| `429` rate limited | Send 6 logins in a row with a wrong password | 6th attempt `429` + `Retry-After`; "Too many requests" recovery card |
+| `413` payload too large | POST more than `SECURITY_MAX_PAYLOAD_KB` of JSON | `413` envelope, `payload_too_large` audit event, no partial write |
+| Untrusted `Origin` | Send `Origin: https://evil.example` | Response has no `Access-Control-Allow-Origin` |
+| `422` mass assignment | POST an application with `status`, `role` or `student_id` | `errors.<field>` = "managed by the internship office…", `mass_assignment_blocked` audited |
+| Stored XSS | Submit `host_company_name` = `<script>alert(1)</script>Acme` | Stored as `Acme`; the `<script>` block is stripped before persistence |
+| SQL injection probe | Submit a role containing `'); DROP TABLE …;--` | Stored literally as text; the table is untouched |
 
 ---
 
@@ -343,8 +427,9 @@ Every response uses one envelope:
 | Method | Endpoint | Access | Purpose |
 | --- | --- | --- | --- |
 | GET | `/api/v1/health` | public | Service + database health |
-| POST | `/api/v1/auth/login` | public | Sanctum token login (throttled 6/min) |
+| POST | `/api/v1/auth/login` | public | Sanctum token login (`throttle:auth-login`, 5/min, uniform `401`) |
 | POST | `/api/v1/auth/logout` | token | Revoke the current token |
+| POST | `/api/v1/auth/revoke-all` | token | Delete every token of the caller, then the app signs out |
 | GET | `/api/v1/auth/me` | token | Current user profile |
 | GET | `/api/v1/applications` | token | Role-scoped listing (`?status=`) |
 | POST | `/api/v1/applications` | student | Create draft + audit entry |
@@ -359,8 +444,10 @@ Every response uses one envelope:
 | GET | `/api/v1/integrations/envelopes` | token, role-scoped | Crypto envelope metadata (`?status=`, `?direction=`, `?application_id=`) |
 | GET | `/api/v1/integrations/keyring/status` | coordinator | Active key id, grace keys, policy — no key material |
 | POST | `/api/v1/integrations/partner-packets/dispatch` | coordinator | Seal and persist an outbound partner packet |
-| POST | `/api/v1/integrations/partner-callbacks/outcome` | public (signed) | Inbound partner webhook (60/min) |
+| POST | `/api/v1/integrations/partner-callbacks/outcome` | public (signed) | Inbound partner webhook (`throttle:integration-webhook`, 30/min) |
 | POST | `/api/v1/integrations/verify-simulation` | coordinator | Controlled rejection-path lab (`503` when disabled) |
+| GET | `/api/v1/security/audit-events` | coordinator | Recent audit events (`?event_type=`, `?severity=`, `per_page <= 50`) |
+| GET | `/api/v1/security/posture` | coordinator | Active hardening configuration (no secrets) |
 
 Listing scope: coordinators see everything, students see their own, advisers see assigned
 applications plus same-department students, partner reviewers see their assigned applications
@@ -497,6 +584,51 @@ is coordinator-only and gated by `CRYPTO_ALLOW_TAMPER_SIMULATION`; outbound disp
 
 ---
 
+### Security posture (Week 15 / Module 15 · SA9)
+
+Hardening lives in `app/Http/Middleware/{SecurityHeadersMiddleware,PayloadSizeAndSanitizationMiddleware}.php`
+and `app/Services/SecurityAuditService.php`. Both middlewares are prepended to the `api` group in
+`bootstrap/app.php`, so they run before any controller.
+
+| Control | Implementation |
+| --- | --- |
+| Response headers | 6 OWASP headers attached to every `/api/v1/*` response |
+| CORS | Explicit `CORS_ALLOWED_ORIGINS` allowlist; localhost `*` patterns only while developing |
+| Payload guard | `Content-Length` or actual body > `SECURITY_MAX_PAYLOAD_KB` → `413` + audit |
+| Sanitization | Trim, strip `\0`, remove `<script>`/`<style>` blocks, then `strip_tags`; `ciphertext`, `tag`, `iv`, `aad`, `password` and `token` keys are exempt |
+| BOPLA | `prohibited` rules on `role`, `status`, `student_id`, `adviser_id`, `partner_reviewer_id`, `placement_confirmed_at`, `interview_schedule`, … → `422` + `mass_assignment_blocked` |
+| Rate limiting | `auth-login` 5/min, `api-standard` 60/min, `integration-webhook` 30/min; `429` envelope + `Retry-After` + `rate_limit_exceeded` |
+| Login | Uniform `401 Invalid credentials provided.` for unknown e-mail and wrong password; `login_failed` audited |
+| Session revocation | `POST /auth/revoke-all` deletes every token and audits `session_revoked` |
+| BOLA/BFLA telemetry | Every `403` is audited from the exception renderer: object-level (route parameter present) → `bola_blocked`, otherwise `bfla_blocked` |
+
+`GET /security/posture` returns the live configuration so the Flutter screen can show verification
+chips:
+
+```json
+{
+  "strict_cors": true,
+  "security_headers_enabled": true,
+  "max_payload_kb": 64,
+  "sanctum_ttl_minutes": 60,
+  "login_rate_limit_per_min": 5,
+  "api_rate_limit_per_min": 60,
+  "webhook_rate_limit_per_min": 30,
+  "debug_mode_disabled": false,
+  "audit_events_total": 9,
+  "audit_events_last_24h": 9
+}
+```
+
+`debug_mode_disabled` reflects `APP_DEBUG`; it is expected to be `false` on the local demo and must be
+`false` (i.e. `APP_DEBUG=false`) in production.
+
+Audit rows are written by `SecurityAuditService::record()` with `hash_hmac('sha256', $ip, APP_KEY)`
+as the only client identifier. `SecurityAuditEventResource` exposes a 12-character prefix and the
+service redacts `password`, `token`, `authorization` and `ip` keys from `details` before writing.
+
+---
+
 ## Repository layout
 
 ```text
@@ -506,32 +638,37 @@ InternshipMonitoring/
 │   │   ├── Console/Commands/{SweepIncompleteCommand, SweepStalledCommand, WeeklySummaryCommand,
 │   │   │            CryptoRotateEnvelopesCommand, PruneIntegrationNoncesCommand}.php
 │   │   ├── Http/{Controllers/Api/V1, Requests, Resources}/
+│   │   ├── Http/Middleware/{SecurityHeadersMiddleware,
+│   │   │            PayloadSizeAndSanitizationMiddleware}.php
 │   │   ├── Models/{User, InternshipApplication, ApplicationStatusLog, AutomationJob,
-│   │   │          SecureIntegrationEnvelope, UsedIntegrationNonce}.php
+│   │   │          SecureIntegrationEnvelope, UsedIntegrationNonce, SecurityAuditEvent}.php
 │   │   ├── Policies/{InternshipApplicationPolicy, AutomationJobPolicy,
-│   │   │            SecureIntegrationEnvelopePolicy}.php
+│   │   │            SecureIntegrationEnvelopePolicy, SecurityAuditEventPolicy}.php
 │   │   ├── Services/{ApplicationWorkflowService, Automation/{AutomationJobService,
 │   │   │            AutomationDispatcherService, AutomationSweepService},
-│   │   │            Crypto/EnvelopeCryptoService}.php
+│   │   │            Crypto/EnvelopeCryptoService, SecurityAuditService}.php
 │   │   ├── Support/{ApiResponse, ApiExceptionRenderer, ApplicationStatusMachine,
 │   │   │          Automation/{LogSanitizer, AutomationRecipientResolver},
 │   │   │          Crypto/CryptoLogSanitizer}.php
 │   │   └── Exceptions/{InvalidStateTransitionException, Crypto/{CryptoConfigurationException,
 │   │              CryptoVerificationException}}.php
-│   ├── config/{automation.php, crypto.php}
+│   ├── config/{automation.php, crypto.php, security.php}
 │   ├── database/{migrations,seeders,factories}/
 │   ├── routes/{api.php, console.php}
 │   └── tests/Feature/{InternshipApplicationWorkflowTest, Week13AutomationWorkflowTest,
-│           Week14CryptographicIntegrationTest}.php
+│           Week14CryptographicIntegrationTest, Week15SecurityHardeningTest}.php
 ├── frontend/     # Flutter Web client
 │   └── lib/
 │       ├── core/{config, network, theme, utils, widgets}/
-│       ├── features/{auth, applications, automation, crypto}/
+│       ├── features/{auth, applications, automation, crypto, security}/
 │       ├── models/{automation_job_model, automation_sweep_result, crypto_envelope_model,
-│       │           crypto_keyring_model, crypto_simulation_result}.dart
-│       ├── services/{application_service, auth_service, automation_service, crypto_service}.dart
+│       │           crypto_keyring_model, crypto_simulation_result, security_audit_event_model,
+│       │           security_posture_model}.dart
+│       ├── services/{application_service, auth_service, automation_service, crypto_service,
+│       │             security_service}.dart
 │       ├── state/{auth_controller, application_list_controller, application_detail_controller,
-│       │          automation_monitor_controller, crypto_integration_controller}.dart
+│       │          automation_monitor_controller, crypto_integration_controller,
+│       │          security_audit_controller}.dart
 │       └── main.dart
 └── README.md
 ```
@@ -550,6 +687,8 @@ InternshipMonitoring/
 | Authorization (`403`) | "Access Denied" panel, no crash |
 | Network error | "Cannot reach the backend API" + **Retry Connection** |
 | Server error (`500`/`503`) | Generic "Service temporarily unavailable", no stack traces |
+| Rate limited (`429`) | "Too many requests - please slow down" with the server cooldown (`Retry-After`) |
+| Payload too large (`413`) | "Request too large" explaining the 64 KB cap and how to reduce the body |
 
 Layout is responsive: `NavigationRail` at `≥ 768px`, collapsible `Drawer` below that, with
 high-contrast status badges and keyboard-focusable controls throughout.
@@ -565,6 +704,12 @@ banner with a "verification lab disabled" warning when `CRYPTO_ALLOW_TAMPER_SIMU
 "key material exposure" danger note, a read-only notice for non-coordinators, and an inline
 "cryptographic envelopes could not be loaded" retry card on the application detail page.
 
+The **Security** screen (coordinator-only) adds its own states: a hardening posture card with
+per-control verification chips, "X / 6 checks" summary, a 403 read-only notice for other roles, an
+actionable empty state when no audit event has been recorded, filterable event cards with severity
+badges, endpoint, hashed `ip` prefix and timestamp, and the inline `429` / `413` recovery guidance
+produced by `ErrorStateView`.
+
 ---
 
 ## Deliberate scope boundary
@@ -573,13 +718,14 @@ banner with a "verification lab disabled" warning when `CRYPTO_ALLOW_TAMPER_SIMU
 lifecycle with an append-only audit trail, standardized JSON envelopes with safe exception
 rendering, a controlled anonymized seeder, scheduled automation sweeps with bounded retries and
 coordinator recovery (Week 13 / Module 13 · SA7), AES-256-GCM payload protection with detached
-HMAC-SHA256 request signing and replay protection (Week 14 / Module 14 · SA8), and the responsive
-Flutter Web client with all eight mandatory UI states.
+HMAC-SHA256 request signing and replay protection (Week 14 / Module 14 · SA8), OWASP API Top 10
+hardening with security telemetry (Week 15 / Module 15 · SA9), and the responsive Flutter Web client
+with all eight mandatory UI states.
 
-**Intentionally deferred (Week 15–18):** an external queue daemon in front of the DB-backed job
-table, k6 / JMeter load scripts, OpenAPI YAML generation, and UAT report templates.
+**Intentionally deferred (Week 16–18):** k6 / JMeter load-testing scripts and concurrency
+benchmarks, OpenAPI YAML generation and portal publishing, UAT report templates and sign-off.
 
 Each can be added without refactoring: the dispatcher already writes to a structured log or an HTTP
-endpoint selected by `AUTOMATION_DISPATCHER_MODE`, payload wrapping fits between `ApiClient` and
-`ApiExceptionRenderer`, and `ApplicationWorkflowService` already exposes a single transition table
+endpoint selected by `AUTOMATION_DISPATCHER_MODE`, the rate limiters and hardening middlewares are
+registered in one place, and `ApplicationWorkflowService` already exposes a single transition table
 that any scheduler or test harness can reuse.

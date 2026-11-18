@@ -72,6 +72,34 @@ class AuthController extends ChangeNotifier {
     }
   }
 
+  /// Week 15 — Module 15 / SA9: revokes every token server-side, then signs
+  /// the user out of the local session. Any other device loses access.
+  Future<void> revokeAllSessions() async {
+    if (_busy) {
+      return;
+    }
+
+    _busy = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await authService.revokeAllSessions();
+      _user = null;
+      _sessionExpired = false;
+    } on ApiException catch (error) {
+      _error = error;
+    } catch (error) {
+      _error = ApiException(
+        kind: ApiErrorKind.unknown,
+        message: 'Unexpected error while revoking sessions: $error',
+      );
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
+
   void expireSession() {
     if (_user == null) {
       return;

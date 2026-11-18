@@ -115,7 +115,19 @@ class ApiClient {
           : envelope.message,
       statusCode: response.statusCode,
       fieldErrors: envelope.errors ?? const <String, List<String>>{},
+      retryAfterSeconds: _retryAfter(response),
     );
+  }
+
+  /// Reads the server cooldown hint exposed by the API (`Retry-After`).
+  int? _retryAfter(http.Response response) {
+    final String? raw = response.headers['retry-after'];
+
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+
+    return int.tryParse(raw.trim());
   }
 
   Future<http.Response> _dispatch(

@@ -87,6 +87,21 @@ class ErrorStateView extends StatelessWidget {
             'fresh nonce and timestamp.',
         accent: AppColors.warning,
       ),
+      ApiErrorKind.rateLimited => ErrorPresentation(
+        icon: Icons.speed_rounded,
+        title: 'Too many requests - please slow down',
+        message: error.cooldownLabel,
+        accent: AppColors.warning,
+      ),
+      ApiErrorKind.payloadTooLarge => const ErrorPresentation(
+        icon: Icons.archive_outlined,
+        title: 'Request too large',
+        message:
+            'This request exceeds the 64 KB payload cap configured on the API. '
+            'Reduce the size of the submitted data — for example by trimming '
+            'long remarks or splitting attachments — and try again.',
+        accent: AppColors.warning,
+      ),
       ApiErrorKind.validation => ErrorPresentation(
         icon: Icons.error_outline_rounded,
         title: 'Some fields need attention',
