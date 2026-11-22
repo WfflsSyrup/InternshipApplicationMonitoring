@@ -1,0 +1,2574 @@
+openapi: 3.1.0
+info:
+  title: "Internship Application Monitor API"
+  version: "1.4.0"
+  description: |
+    PFEBSIT 002 — Integrative Programming and Technologies 2
+    University of La Salette, Inc. · College of Information Technology
+    
+    A full-stack monitoring system for internship applications across four roles:
+    student, adviser, internship coordinator, and partner reviewer.
+    
+    This OpenAPI 3.1.0 specification documents every `/api/v1/*` route in Project 10.
+    All examples use fictional `*.uls-test.edu.ph` domains and placeholder tokens.
+  contact:
+    name: "Internship Office"
+    email: "internship-office@uls-test.edu.ph"
+  license:
+    name: "Proprietary — Educational Use Only"
+servers:
+  - url: "http://127.0.0.1:8000/api/v1"
+    description: "Local Controlled Development Server"
+security:
+  - BearerSanctumAuth: []
+  - PartnerHmacHeaders: []
+tags:
+  - name: "Health"
+    description: "Service health and deep readiness probes"
+  - name: "Authentication"
+    description: "Sanctum token authentication and session management"
+  - name: "Applications"
+    description: "Internship application CRUD and workflow transitions"
+  - name: "Partner Reviewers"
+    description: "Coordinator directory of partner reviewers"
+  - name: "Automation"
+    description: "Week 13 / SA7 — Scheduled sweeps, bounded retries, coordinator recovery"
+  - name: "Cryptographic Integrations"
+    description: "Week 14 / SA8 — AES-256-GCM envelopes, HMAC-SHA256 signing, replay protection"
+  - name: "Security & Audit"
+    description: "Week 15 / SA9 — OWASP hardening, rate limiting, audit trail"
+  - name: "Performance & Resilience"
+    description: "Week 16 / SA10 — Benchmarking, optimistic concurrency, circuit breaker, deep health"
+  - name: "Developer Documentation"
+    description: "Week 17 / SA11 — OpenAPI 3.1 contract, parity audit, developer portal"
+components:
+  securitySchemes:
+    BearerSanctumAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: "JWT"
+      description: "Laravel Sanctum personal access token. Include as `Authorization: Bearer <token>`"
+    PartnerHmacHeaders:
+      type: apiKey
+      in: header
+      name: X-Signature-256
+      description: |
+        HMAC-SHA256 signature (`sha256=<hex>`) paired with `X-Key-Id`, `X-Timestamp`, `X-Nonce`.
+        Used for the public partner callback webhook only.
+  schemas:
+    ApiSuccessEnvelope:
+      type: object
+      required: [success, message, data, errors]
+      properties:
+        success:
+          type: boolean
+          const: true
+        message:
+          type: string
+        data:
+          type: object
+          description: "Response payload — varies by endpoint"
+        errors:
+          type: "null"
+          description: "Always null on success"
+      example:
+        success: true
+        message: "Applications retrieved successfully."
+        data:
+          current_page: 1
+          data: []
+        errors: null
+    ApiErrorEnvelope:
+      type: object
+      required: [success, message, data, errors]
+      properties:
+        success:
+          type: boolean
+          const: false
+        message:
+          type: string
+        data:
+          type: object
+          nullable: true
+          description: "Optional context (e.g., latest_version on 409 Conflict)"
+        errors:
+          type: object
+          nullable: true
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: "Field-keyed error messages"
+      example:
+        success: false
+        message: "Conflict detected: this application was modified by another session. Reload the latest version and retry."
+        data:
+          latest_version: 3
+        errors:
+          version:
+            - "version_conflict"
+    ValidationErrorEnvelope:
+      allOf:
+        - $ref: "#/components/schemas/ApiErrorEnvelope"
+        - type: object
+          properties:
+            errors:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+              description: "Laravel validation errors keyed by field"
+      example:
+        success: false
+        message: "The given data was invalid."
+        data: null
+        errors:
+          host_company_name:
+            - "The host company name field is required."
+          target_role:
+            - "The target role field is required."
+    UserSummary:
+      type: object
+      required: [id, student_or_employee_id, name, email, role, role_label]
+      properties:
+        id:
+          type: integer
+          format: int64
+        student_or_employee_id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+        role:
+          type: string
+          enum: [student, adviser, coordinator, partner_reviewer]
+        role_label:
+          type: string
+        department_or_company:
+          type: string
+          nullable: true
+      example:
+        id: 4
+        student_or_employee_id: "2026-00001"
+        name: "Student One"
+        email: "student1.demo@uls-test.edu.ph"
+        role: "student"
+        role_label: "Student"
+        department_or_company: "College of Information Technology"
+    InternshipApplication:
+      type: object
+      required: [id, reference_code, status, status_label, host_company_name, target_role, internship_hours_required, target_start_date, requirements_checklist, requirements_complete, version, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        reference_code:
+          type: string
+          pattern: "^INT-\\d{4}-\\d{4}$"
+        status:
+          type: string
+          enum: [draft, submitted, requirements_verified, revision_requested, endorsed, partner_submitted, interview_scheduled, interview_passed, interview_failed, placement_confirmed, withdrawn, rejected]
+        status_label:
+          type: string
+        host_company_name:
+          type: string
+        target_role:
+          type: string
+        internship_hours_required:
+          type: integer
+          format: int32
+        target_start_date:
+          type: string
+          format: date
+        requirements_checklist:
+          type: object
+          additionalProperties:
+            type: boolean
+        requirements_complete:
+          type: boolean
+        interview_schedule:
+          type: string
+          format: date-time
+          nullable: true
+        interview_notes:
+          type: string
+          nullable: true
+        placement_confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        placement_acknowledged_at:
+          type: string
+          format: date-time
+          nullable: true
+        version:
+          type: integer
+          format: int32
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        student:
+          $ref: "#/components/schemas/UserSummary"
+        adviser:
+          $ref: "#/components/schemas/UserSummary"
+        partner_reviewer:
+          $ref: "#/components/schemas/UserSummary"
+        status_logs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplicationStatusLog"
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApplicationAction"
+      example:
+        id: 1
+        reference_code: "INT-2026-0001"
+        status: "submitted"
+        status_label: "Submitted"
+        host_company_name: "TechCorp Test Solutions"
+        target_role: "Junior Backend Developer"
+        internship_hours_required: 486
+        target_start_date: "2026-02-02"
+        requirements_checklist:
+          resume_ready: true
+          endorsement_letter: false
+          parent_consent: true
+          medical_clearance: true
+        requirements_complete: false
+        version: 1
+        created_at: "2026-11-15T09:21:30Z"
+        updated_at: "2026-11-22T09:21:30Z"
+    ApplicationStatusLog:
+      type: object
+      required: [id, internship_application_id, actor_id, actor_role, from_status, to_status, remarks, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        internship_application_id:
+          type: integer
+          format: int64
+        actor_id:
+          type: integer
+          format: int64
+        actor_name:
+          type: string
+          nullable: true
+        actor_role:
+          type: string
+        from_status:
+          type: string
+          nullable: true
+        from_status_label:
+          type: string
+          nullable: true
+        to_status:
+          type: string
+        to_status_label:
+          type: string
+        remarks:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 1
+        internship_application_id: 1
+        actor_id: 4
+        actor_name: "Student One"
+        actor_role: "student"
+        from_status: "draft"
+        from_status_label: "Draft"
+        to_status: "submitted"
+        to_status_label: "Submitted"
+        remarks: "Submitted for adviser review"
+        created_at: "2026-11-15T09:21:30Z"
+    ApplicationAction:
+      type: object
+      required: [status, label, requires_partner_reviewer, requires_interview_schedule, requires_remarks]
+      properties:
+        status:
+          type: string
+        label:
+          type: string
+        requires_partner_reviewer:
+          type: boolean
+        requires_interview_schedule:
+          type: boolean
+        requires_remarks:
+          type: boolean
+      example:
+        status: "requirements_verified"
+        label: "Verify Requirements"
+        requires_partner_reviewer: false
+        requires_interview_schedule: false
+        requires_remarks: false
+    AutomationJob:
+      type: object
+      required: [id, correlation_id, idempotency_key, internship_application_id, automation_type, automation_type_label, recipient_role, recipient_identifier, status, status_label, attempts, max_attempts, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+        internship_application_id:
+          type: integer
+          format: int64
+        application_reference_code:
+          type: string
+          nullable: true
+        automation_type:
+          type: string
+          enum: [milestone_reminder, incomplete_sweep, stalled_sweep, weekly_summary]
+        automation_type_label:
+          type: string
+        recipient_role:
+          type: string
+        recipient_identifier:
+          type: string
+        status:
+          type: string
+          enum: [queued, retrying, succeeded, manual_review_required]
+        status_label:
+          type: string
+        attempts:
+          type: integer
+          format: int32
+        attempts_label:
+          type: string
+        max_attempts:
+          type: integer
+          format: int32
+        failure_class:
+          type: string
+          nullable: true
+        last_error_code:
+          type: integer
+          nullable: true
+        last_error_summary:
+          type: string
+          nullable: true
+        guidance:
+          type: string
+        next_retry_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        coordinator_remarks:
+          type: string
+          nullable: true
+        payload:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      example:
+        id: 1
+        correlation_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        idempotency_key: "milestone:1:submitted:5"
+        internship_application_id: 1
+        application_reference_code: "INT-2026-0001"
+        automation_type: "milestone_reminder"
+        automation_type_label: "Milestone Reminder"
+        recipient_role: "adviser"
+        recipient_identifier: "EMP-ADV-001"
+        status: "queued"
+        status_label: "Queued"
+        attempts: 1
+        attempts_label: "1/3"
+        max_attempts: 3
+        failure_class: null
+        last_error_code: null
+        last_error_summary: null
+        guidance: "Awaiting first dispatch"
+        next_retry_at: null
+        completed_at: null
+        coordinator_remarks: null
+        payload:
+          reason: "milestone_reached"
+          from_status: "draft"
+          to_status: "submitted"
+        created_at: "2026-11-15T09:21:30Z"
+        updated_at: "2026-11-22T09:21:30Z"
+    AutomationWeeklySummary:
+      type: object
+      properties:
+        week_key:
+          type: string
+        week_start:
+          type: string
+        week_end:
+          type: string
+        counts:
+          type: object
+        total:
+          type: integer
+        generated_at:
+          type: string
+          format: date-time
+        job_id:
+          type: integer
+      example:
+        week_key: "2026-W46"
+        week_start: "2026-11-11"
+        week_end: "2026-11-17"
+        counts:
+          draft: 2
+          submitted: 5
+          endorsed: 1
+        total: 8
+        generated_at: "2026-11-17T17:00:00Z"
+        job_id: 42
+    AutomationSweepResult:
+      type: object
+      required: [type, scanned, enqueued, duplicates_skipped, dispatch]
+      properties:
+        type:
+          type: string
+          enum: [incomplete, stalled, weekly]
+        scanned:
+          type: integer
+        enqueued:
+          type: integer
+        duplicates_skipped:
+          type: integer
+        dispatch:
+          type: object
+          required: [processed, succeeded, retry_scheduled, manual_review_required]
+          properties:
+            processed:
+              type: integer
+            succeeded:
+              type: integer
+            retry_scheduled:
+              type: integer
+            manual_review_required:
+              type: integer
+      example:
+        type: "stalled"
+        scanned: 4
+        enqueued: 2
+        duplicates_skipped: 1
+        dispatch:
+          processed: 2
+          succeeded: 1
+          retry_scheduled: 1
+          manual_review_required: 0
+    SecureIntegrationEnvelope:
+      type: object
+      required: [id, correlation_id, application_id, application_ref, direction, direction_label, key_id, cipher_suite, signature_verified, replay_checked, verification_status, verification_label, failure_reason, payload_sha256, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          format: uuid
+        application_id:
+          type: integer
+          format: int64
+        application_ref:
+          type: string
+        direction:
+          type: string
+          enum: [outbound, inbound]
+        direction_label:
+          type: string
+        key_id:
+          type: string
+        cipher_suite:
+          type: string
+        signature_verified:
+          type: boolean
+        replay_checked:
+          type: boolean
+        verification_status:
+          type: string
+          enum: [verified, rejected_signature, rejected_tamper, rejected_replay, rejected_expired]
+        verification_label:
+          type: string
+        failure_reason:
+          type: string
+          nullable: true
+        payload_sha256:
+          type: string
+          pattern: "^sha256:"
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 1
+        correlation_id: "b2c3d4e5-f6a7-8901-bcde-f23456789012"
+        application_id: 3
+        application_ref: "INT-2026-0003"
+        direction: "outbound"
+        direction_label: "Outbound Partner Packet"
+        key_id: "v2"
+        cipher_suite: "AES-256-GCM"
+        signature_verified: true
+        replay_checked: false
+        verification_status: "verified"
+        verification_label: "Verified"
+        failure_reason: null
+        payload_sha256: "sha256:a1b2c3d4e5f6..."
+        created_at: "2026-11-15T09:21:30Z"
+    CryptoKeyringStatus:
+      type: object
+      required: [active_kid, supported_kids, cipher_suite, signature_algorithm, iv_length_bytes, tag_length_bytes, clock_skew_seconds, tamper_simulation_enabled, key_material_exposed, client_keys_embedded, totals]
+      properties:
+        active_kid:
+          type: string
+        supported_kids:
+          type: array
+          items:
+            type: string
+        cipher_suite:
+          type: string
+        signature_algorithm:
+          type: string
+        iv_length_bytes:
+          type: integer
+        tag_length_bytes:
+          type: integer
+        clock_skew_seconds:
+          type: integer
+        tamper_simulation_enabled:
+          type: boolean
+        key_material_exposed:
+          type: boolean
+        client_keys_embedded:
+          type: integer
+        totals:
+          type: object
+          required: [envelopes, verified, rejected]
+          properties:
+            envelopes:
+              type: integer
+            verified:
+              type: integer
+            rejected:
+              type: integer
+      example:
+        active_kid: "v2"
+        supported_kids: ["v1", "v2"]
+        cipher_suite: "AES-256-GCM"
+        signature_algorithm: "HMAC-SHA256"
+        iv_length_bytes: 12
+        tag_length_bytes: 16
+        clock_skew_seconds: 300
+        tamper_simulation_enabled: false
+        key_material_exposed: false
+        client_keys_embedded: 0
+        totals:
+          envelopes: 5
+          verified: 4
+          rejected: 1
+    CryptoVerificationSimulation:
+      type: object
+      required: [mode, reference_code, outcome, status, http_status, steps]
+      properties:
+        mode:
+          type: string
+          enum: [valid, tampered_ciphertext, forged_signature, replay_attack, expired_timestamp]
+        reference_code:
+          type: string
+        outcome:
+          type: string
+        status:
+          type: string
+        http_status:
+          type: integer
+        steps:
+          type: array
+          items:
+            type: object
+            required: [check, result, detail]
+            properties:
+              check:
+                type: string
+              result:
+                type: string
+                enum: [verified, rejected]
+              detail:
+                type: string
+      example:
+        mode: "tampered_ciphertext"
+        reference_code: "INT-2026-0003"
+        outcome: "interview_passed"
+        status: "rejected_tamper"
+        http_status: 422
+        steps:
+          - check: "Signature verification"
+            result: "verified"
+            detail: "HMAC-SHA256 signature matches"
+          - check: "Timestamp skew (±300s)"
+            result: "verified"
+            detail: "Timestamp within acceptable window"
+          - check: "Nonce replay check"
+            result: "verified"
+            detail: "Fresh nonce not yet consumed"
+          - check: "AES-256-GCM decryption & AAD"
+            result: "rejected"
+            detail: "Authentication tag mismatch — ciphertext was tampered"
+    SecurityAuditEvent:
+      type: object
+      required: [id, correlation_id, event_type, event_label, severity, severity_label, actor_id, actor_role, ip_hash_prefix, endpoint, http_status, details, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+          enum: [bola_blocked, bfla_blocked, rate_limit_exceeded, mass_assignment_blocked, payload_too_large, login_failed, session_revoked]
+        event_label:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        severity_label:
+          type: string
+        actor_id:
+          type: integer
+          format: int64
+          nullable: true
+        actor_role:
+          type: string
+          nullable: true
+        ip_hash_prefix:
+          type: string
+          pattern: "^[a-f0-9]{12}$"
+        endpoint:
+          type: string
+        http_status:
+          type: integer
+        details:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 1
+        correlation_id: "c3d4e5f6-a7b8-9012-cdef-345678901234"
+        event_type: "rate_limit_exceeded"
+        event_label: "Rate Limit Exceeded"
+        severity: "medium"
+        severity_label: "Medium"
+        actor_id: null
+        actor_role: null
+        ip_hash_prefix: "a1b2c3d4e5f6"
+        endpoint: "/api/v1/auth/login"
+        http_status: 429
+        details:
+          retry_after: 60
+          method: "POST"
+        created_at: "2026-11-22T09:30:00Z"
+    SecurityPosture:
+      type: object
+      required: [strict_cors, security_headers_enabled, max_payload_kb, sanctum_ttl_minutes, login_rate_limit_per_min, api_rate_limit_per_min, webhook_rate_limit_per_min, debug_mode_disabled, audit_events_total, audit_events_last_24h]
+      properties:
+        strict_cors:
+          type: boolean
+        security_headers_enabled:
+          type: boolean
+        max_payload_kb:
+          type: integer
+        sanctum_ttl_minutes:
+          type: integer
+        login_rate_limit_per_min:
+          type: integer
+        api_rate_limit_per_min:
+          type: integer
+        webhook_rate_limit_per_min:
+          type: integer
+        debug_mode_disabled:
+          type: boolean
+        audit_events_total:
+          type: integer
+        audit_events_last_24h:
+          type: integer
+      example:
+        strict_cors: true
+        security_headers_enabled: true
+        max_payload_kb: 64
+        sanctum_ttl_minutes: 60
+        login_rate_limit_per_min: 5
+        api_rate_limit_per_min: 60
+        webhook_rate_limit_per_min: 30
+        debug_mode_disabled: false
+        audit_events_total: 9
+        audit_events_last_24h: 9
+    PerformanceMetrics:
+      type: object
+      required: [slo_targets, live_metrics, circuit_breaker, recent_benchmarks]
+      properties:
+        slo_targets:
+          $ref: "#/components/schemas/PerformanceSLOTargets"
+        live_metrics:
+          $ref: "#/components/schemas/PerformanceLiveMetrics"
+        circuit_breaker:
+          $ref: "#/components/schemas/CircuitBreakerMetrics"
+        recent_benchmarks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PerformanceBenchmarkRun"
+      example:
+        slo_targets:
+          p50_ms: 50.0
+          p95_ms: 150.0
+          p99_ms: 300.0
+          avg_queries_per_req: 8.0
+          throughput_rps_min: 20.0
+        live_metrics:
+          p50_ms: 12.5
+          p95_ms: 45.2
+          p99_ms: 89.1
+          avg_queries_per_req: 3.4
+          sample_count: 150
+        circuit_breaker:
+          state: "closed"
+          failure_count: 0
+          half_open_probes_remaining: 3
+        recent_benchmarks: []
+    PerformanceSLOTargets:
+      type: object
+      required: [p50_ms, p95_ms, p99_ms, avg_queries_per_req, throughput_rps_min]
+      properties:
+        p50_ms:
+          type: number
+        p95_ms:
+          type: number
+        p99_ms:
+          type: number
+        avg_queries_per_req:
+          type: number
+        throughput_rps_min:
+          type: number
+    PerformanceLiveMetrics:
+      type: object
+      required: [p50_ms, p95_ms, p99_ms, avg_queries_per_req, sample_count]
+      properties:
+        p50_ms:
+          type: number
+        p95_ms:
+          type: number
+        p99_ms:
+          type: number
+        avg_queries_per_req:
+          type: number
+        sample_count:
+          type: integer
+    CircuitBreakerMetrics:
+      type: object
+      required: [state, failure_count, half_open_probes_remaining]
+      properties:
+        state:
+          type: string
+          enum: [closed, open, half_open]
+        failure_count:
+          type: integer
+        half_open_probes_remaining:
+          type: integer
+    PerformanceBenchmarkRun:
+      type: object
+      required: [id, correlation_id, scenario, scenario_label, virtual_users, total_requests, success_count, conflict_or_throttled_count, error_count, p50_ms, p95_ms, p99_ms, avg_queries_per_req, throughput_rps, slo_passed, slo_label, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        correlation_id:
+          type: string
+          format: uuid
+        scenario:
+          type: string
+          enum: [read_pipeline_indexed, optimistic_concurrency_race, burst_mixed_workload]
+        scenario_label:
+          type: string
+        virtual_users:
+          type: integer
+        total_requests:
+          type: integer
+        success_count:
+          type: integer
+        conflict_or_throttled_count:
+          type: integer
+        error_count:
+          type: integer
+        p50_ms:
+          type: number
+        p95_ms:
+          type: number
+        p99_ms:
+          type: number
+        avg_queries_per_req:
+          type: number
+        throughput_rps:
+          type: number
+        slo_passed:
+          type: boolean
+        slo_label:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+      example:
+        id: 1
+        correlation_id: "d4e5f6a7-b8c9-0123-def4-567890123456"
+        scenario: "read_pipeline_indexed"
+        scenario_label: "Read Pipeline Indexed"
+        virtual_users: 3
+        total_requests: 30
+        success_count: 30
+        conflict_or_throttled_count: 0
+        error_count: 0
+        p50_ms: 2.71
+        p95_ms: 3.93
+        p99_ms: 5.46
+        avg_queries_per_req: 31.0
+        throughput_rps: 34.58
+        slo_passed: false
+        slo_label: "SLO: p50 ✓, p95 ✓, p99 ✓, queries ✗, throughput ✓"
+        created_at: "2026-11-22T09:30:00Z"
+    PerformanceBenchmarkRequest:
+      type: object
+      required: [scenario]
+      properties:
+        scenario:
+          type: string
+          enum: [read_pipeline_indexed, optimistic_concurrency_race, burst_mixed_workload]
+        virtual_users:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 5
+        requests_per_user:
+          type: integer
+          minimum: 5
+          maximum: 100
+          default: 20
+      example:
+        scenario: "read_pipeline_indexed"
+        virtual_users: 3
+        requests_per_user: 10
+    ContractAuditReport:
+      type: object
+      required: [parity_passed, contract_version, openapi_version, documented_operations, missing_from_spec, stale_in_spec, secret_scan_clean]
+      properties:
+        parity_passed:
+          type: boolean
+        contract_version:
+          type: string
+        openapi_version:
+          type: string
+        documented_operations:
+          type: integer
+        missing_from_spec:
+          type: array
+          items:
+            type: string
+        stale_in_spec:
+          type: array
+          items:
+            type: string
+        secret_scan_clean:
+          type: boolean
+      example:
+        parity_passed: true
+        contract_version: "1.4.0"
+        openapi_version: "3.1.0"
+        documented_operations: 28
+        missing_from_spec: []
+        stale_in_spec: []
+        secret_scan_clean: true
+    HealthResponse:
+      type: object
+      required: [status, service, environment, database, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unavailable]
+        service:
+          type: string
+        environment:
+          type: string
+        database:
+          type: string
+          enum: [connected, unavailable]
+        timestamp:
+          type: string
+          format: date-time
+      example:
+        status: "ok"
+        service: "Internship Monitor"
+        environment: "local"
+        database: "connected"
+        timestamp: "2026-11-22T09:30:00Z"
+    DeepHealthResponse:
+      type: object
+      required: [status, service, environment, components, timestamp]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        service:
+          type: string
+        environment:
+          type: string
+        components:
+          type: object
+          required: [database, cache, circuit_breaker, automation_dead_letter]
+          properties:
+            database:
+              $ref: "#/components/schemas/DatabaseHealth"
+            cache:
+              $ref: "#/components/schemas/CacheHealth"
+            circuit_breaker:
+              $ref: "#/components/schemas/CircuitBreakerHealth"
+            automation_dead_letter:
+              $ref: "#/components/schemas/AutomationDeadLetterHealth"
+        timestamp:
+          type: string
+          format: date-time
+    DatabaseHealth:
+      type: object
+      required: [status, latency_ms, warning]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        latency_ms:
+          type: number
+        warning:
+          type: boolean
+        error:
+          type: string
+    CacheHealth:
+      type: object
+      required: [status, latency_ms, warning]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        latency_ms:
+          type: number
+        warning:
+          type: boolean
+        error:
+          type: string
+    CircuitBreakerHealth:
+      type: object
+      required: [status, state, failure_count, half_open_probes_remaining]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded]
+        state:
+          type: string
+          enum: [closed, open, half_open]
+        failure_count:
+          type: integer
+        half_open_probes_remaining:
+          type: integer
+    AutomationDeadLetterHealth:
+      type: object
+      required: [status, manual_review_required_count]
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+        manual_review_required_count:
+          type: integer
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: "Basic service health check"
+      operationId: "healthShow"
+      responses:
+        '200':
+          description: "Service is healthy"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+              description: "OpenAPI contract version"
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+              description: "OpenAPI specification version"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/HealthResponse"
+        '503':
+          description: "Service temporarily unavailable"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /health/deep:
+    get:
+      tags: [Health]
+      summary: "Deep component-level readiness probe"
+      operationId: "healthDeep"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "All systems operational"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/DeepHealthResponse"
+        '503':
+          description: "One or more components degraded"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/DeepHealthResponse"
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: "Sign in with email and password (Sanctum token)"
+      operationId: "authLogin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "student1.demo@uls-test.edu.ph"
+                password:
+                  type: string
+                  format: password
+                  example: "Password123!"
+      responses:
+        '200':
+          description: "Signed in successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: object
+                    required: [token, token_type, user]
+                    properties:
+                      token:
+                        type: string
+                        description: "Sanctum personal access token (placeholder in examples)"
+                        example: "replace-with-sanctum-token"
+                      token_type:
+                        type: string
+                        const: "Bearer"
+                      user:
+                        $ref: "#/components/schemas/UserSummary"
+        '401':
+          description: "Invalid credentials (uniform anti-enumeration response)"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '422':
+          description: "Validation error"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+        '429':
+          description: "Rate limited (5/min per email + IP)"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /auth/me:
+    get:
+      tags: [Authentication]
+      summary: "Get current authenticated user profile"
+      operationId: "authMe"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Session is active"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/UserSummary"
+        '401':
+          description: "Unauthenticated"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: "Revoke current token and sign out"
+      operationId: "authLogout"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Signed out successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: "null"
+  /auth/revoke-all:
+    post:
+      tags: [Authentication]
+      summary: "Delete all personal access tokens for the caller"
+      operationId: "authRevokeAll"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "All sessions revoked"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: object
+                    required: [revoked_tokens]
+                    properties:
+                      revoked_tokens:
+                        type: integer
+  /applications:
+    get:
+      tags: [Applications]
+      summary: "List internship applications (role-scoped, paginated, filterable)"
+      operationId: "applicationsIndex"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, submitted, requirements_verified, revision_requested, endorsed, partner_submitted, interview_scheduled, interview_passed, interview_failed, placement_confirmed, withdrawn, rejected]
+          description: "Filter by application status"
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 15
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: If-None-Match
+          in: header
+          schema:
+            type: string
+          description: "ETag for conditional GET (304 Not Modified)"
+      responses:
+        '200':
+          description: "Applications retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            X-Total-Count:
+              schema:
+                type: integer
+            X-Per-Page:
+              schema:
+                type: integer
+            X-Current-Page:
+              schema:
+                type: integer
+            X-Last-Page:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/InternshipApplication"
+        '304':
+          description: "Not Modified (ETag matches)"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+    post:
+      tags: [Applications]
+      summary: "Create a new draft application (student only)"
+      operationId: "applicationsStore"
+      security:
+        - BearerSanctumAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [host_company_name, target_role, internship_hours_required, target_start_date, requirements_checklist]
+              properties:
+                host_company_name:
+                  type: string
+                  maxLength: 150
+                  example: "TechCorp Test Solutions"
+                target_role:
+                  type: string
+                  maxLength: 100
+                  example: "Junior Backend Developer"
+                internship_hours_required:
+                  type: integer
+                  minimum: 1
+                  maximum: 2000
+                  example: 486
+                target_start_date:
+                  type: string
+                  format: date
+                  example: "2026-02-02"
+                requirements_checklist:
+                  type: object
+                  additionalProperties:
+                    type: boolean
+                  example:
+                    resume_ready: true
+                    endorsement_letter: false
+                    parent_consent: true
+                    medical_clearance: true
+      responses:
+        '201':
+          description: "Application created successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InternshipApplication"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not a student)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '422':
+          description: "Validation error"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+  /applications/{id}:
+    get:
+      tags: [Applications]
+      summary: "Get a single application with full audit trail"
+      operationId: "applicationsShow"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: "Application retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InternshipApplication"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Access denied (policy)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '404':
+          description: "Not found"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+    put:
+      tags: [Applications]
+      summary: "Update application details (student, draft/revision_requested only)"
+      operationId: "applicationsUpdate"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: expected_version
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: "Optimistic concurrency control — CAS update fails with 409 if version changed"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                host_company_name:
+                  type: string
+                  maxLength: 150
+                target_role:
+                  type: string
+                  maxLength: 100
+                internship_hours_required:
+                  type: integer
+                  minimum: 1
+                  maximum: 2000
+                target_start_date:
+                  type: string
+                  format: date
+                requirements_checklist:
+                  type: object
+                  additionalProperties:
+                    type: boolean
+                expected_version:
+                  type: integer
+                  minimum: 1
+                  description: "Alternative location for expected_version (query param preferred)"
+      responses:
+        '200':
+          description: "Application updated successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InternshipApplication"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (policy)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '409':
+          description: "Conflict — version changed by another session"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+                properties:
+                  data:
+                    type: object
+                    required: [latest_version]
+                    properties:
+                      latest_version:
+                        type: integer
+                  errors:
+                    type: object
+                    required: [version]
+                    properties:
+                      version:
+                        type: array
+                        items:
+                          type: string
+        '422':
+          description: "Validation error or invalid state for edit"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+  /applications/{id}/transition:
+    post:
+      tags: [Applications]
+      summary: "Execute a workflow state transition (role + state machine)"
+      operationId: "applicationsTransition"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: expected_version
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+          description: "Optimistic concurrency control for transitions"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_status]
+              properties:
+                target_status:
+                  type: string
+                  enum: [submitted, requirements_verified, revision_requested, endorsed, partner_submitted, interview_scheduled, interview_passed, interview_failed, placement_confirmed, withdrawn, rejected]
+                remarks:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+                partner_reviewer_id:
+                  type: integer
+                  nullable: true
+                  description: "Required when target_status is partner_submitted"
+                interview_schedule:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: "Required when target_status is interview_scheduled"
+                interview_notes:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+                expected_version:
+                  type: integer
+                  minimum: 1
+      responses:
+        '200':
+          description: "Application status updated successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/InternshipApplication"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (role not allowed for this transition)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '409':
+          description: "Conflict — version changed by another session"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+                properties:
+                  data:
+                    type: object
+                    required: [latest_version]
+                    properties:
+                      latest_version:
+                        type: integer
+                  errors:
+                    type: object
+                    required: [version]
+                    properties:
+                      version:
+                        type: array
+                        items:
+                          type: string
+        '422':
+          description: "Validation error (invalid jump, missing required fields, etc.)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+                properties:
+                  errors:
+                    type: object
+                    properties:
+                      status:
+                        type: array
+                        items:
+                          type: string
+  /partner-reviewers:
+    get:
+      tags: [Partner Reviewers]
+      summary: "List partner reviewers (coordinator only)"
+      operationId: "partnerReviewersIndex"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Partner reviewers retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UserSummary"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /automation/jobs:
+    get:
+      tags: [Automation]
+      summary: "List automation jobs (role-scoped, filterable)"
+      operationId: "automationJobsIndex"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [queued, retrying, succeeded, manual_review_required]
+        - name: application_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: "Automation jobs retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AutomationJob"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /automation/sweeps/run:
+    post:
+      tags: [Automation]
+      summary: "Run a controlled sweep (coordinator only)"
+      operationId: "automationRunSweep"
+      security:
+        - BearerSanctumAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [incomplete, stalled, weekly]
+                fault_mode:
+                  type: string
+                  enum: [transient_once, permanent_invalid_recipient]
+                  nullable: true
+      responses:
+        '200':
+          description: "Sweep completed"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AutomationSweepResult"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '422':
+          description: "Fault injection disabled or invalid type"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+  /automation/jobs/{job}/requeue:
+    post:
+      tags: [Automation]
+      summary: "Requeue a manual review job for recovery (coordinator only)"
+      operationId: "automationRequeue"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: job
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                recipient_identifier:
+                  type: string
+                  nullable: true
+                remarks:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+      responses:
+        '200':
+          description: "Job requeued for recovery"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: object
+                    required: [job, dispatch]
+                    properties:
+                      job:
+                        $ref: "#/components/schemas/AutomationJob"
+                      dispatch:
+                        type: object
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '422':
+          description: "Job not in manual_review_required status"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+  /automation/summaries/weekly:
+    get:
+      tags: [Automation]
+      summary: "Get latest succeeded weekly summary"
+      operationId: "automationWeeklySummary"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Weekly summary retrieved (or null)"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/AutomationWeeklySummary"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /integrations/envelopes:
+    get:
+      tags: [Cryptographic Integrations]
+      summary: "List cryptographic envelope metadata (role-scoped)"
+      operationId: "integrationsEnvelopesIndex"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [verified, rejected_signature, rejected_tamper, rejected_replay, rejected_expired]
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [outbound, inbound]
+        - name: application_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: "Envelope metadata retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SecureIntegrationEnvelope"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /integrations/keyring/status:
+    get:
+      tags: [Cryptographic Integrations]
+      summary: "Get cryptographic keyring status (coordinator only)"
+      operationId: "integrationsKeyringStatus"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Keyring status retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CryptoKeyringStatus"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /integrations/partner-packets/dispatch:
+    post:
+      tags: [Cryptographic Integrations]
+      summary: "Seal and dispatch an outbound partner packet (coordinator only)"
+      operationId: "integrationsDispatchPartnerPacket"
+      security:
+        - BearerSanctumAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [application_id]
+              properties:
+                application_id:
+                  type: integer
+                  format: int64
+                remarks:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+      responses:
+        '201':
+          description: "Partner packet sealed and dispatched"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SecureIntegrationEnvelope"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '422':
+          description: "Application not in endorsed/partner_submitted state or keys not configured"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+  /integrations/partner-callbacks/outcome:
+    post:
+      tags: [Cryptographic Integrations]
+      summary: "Public partner webhook — verifies HMAC, timestamp, nonce, decrypts AES-256-GCM, applies outcome"
+      operationId: "integrationsPartnerCallback"
+      security:
+        - PartnerHmacHeaders: []
+      parameters:
+        - name: X-Key-Id
+          in: header
+          required: true
+          schema:
+            type: string
+          description: "Key ID used for HMAC and AES"
+        - name: X-Timestamp
+          in: header
+          required: true
+          schema:
+            type: string
+          description: "ISO 8601 timestamp (e.g., 2026-11-22T09:30:00Z)"
+        - name: X-Nonce
+          in: header
+          required: true
+          schema:
+            type: string
+          description: "Unique nonce (128-bit random, base64)"
+        - name: X-Signature-256
+          in: header
+          required: true
+          schema:
+            type: string
+          description: "HMAC-SHA256 signature in format 'sha256=<hex>'"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reference_code, outcome]
+              properties:
+                reference_code:
+                  type: string
+                  pattern: "^INT-\\d{4}-\\d{4}$"
+                outcome:
+                  type: string
+                  enum: [interview_passed, interview_failed]
+                remarks:
+                  type: string
+                  maxLength: 2000
+                  nullable: true
+      responses:
+        '200':
+          description: "Callback verified and outcome applied"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: object
+                    required: [application, envelope, applied_transition]
+                    properties:
+                      application:
+                        $ref: "#/components/schemas/InternshipApplication"
+                      envelope:
+                        $ref: "#/components/schemas/SecureIntegrationEnvelope"
+                      applied_transition:
+                        type: object
+                        required: [outcome, from_status, to_status]
+                        properties:
+                          outcome:
+                            type: string
+                          from_status:
+                            type: string
+                          to_status:
+                            type: string
+        '401':
+          description: "Signature verification failed or timestamp expired"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '404':
+          description: "Unknown application reference"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '409':
+          description: "Replay attack detected (nonce already consumed)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '422':
+          description: "Tampered ciphertext or invalid outcome"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+        '429':
+          description: "Rate limited (30/min per key + IP)"
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /integrations/verify-simulation:
+    post:
+      tags: [Cryptographic Integrations]
+      summary: "Controlled rejection-path verification lab (coordinator only)"
+      operationId: "integrationsVerifySimulation"
+      security:
+        - BearerSanctumAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mode]
+              properties:
+                mode:
+                  type: string
+                  enum: [valid, tampered_ciphertext, forged_signature, replay_attack, expired_timestamp]
+                reference_code:
+                  type: string
+                  pattern: "^INT-\\d{4}-\\d{4}$"
+                  nullable: true
+                outcome:
+                  type: string
+                  enum: [interview_passed, interview_failed]
+                  nullable: true
+      responses:
+        '200':
+          description: "Verification simulation completed"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/CryptoVerificationSimulation"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '422':
+          description: "Tamper simulation disabled or invalid mode"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorEnvelope"
+        '503':
+          description: "Controlled tamper simulation disabled (CRYPTO_ALLOW_TAMPER_SIMULATION=false)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /security/audit-events:
+    get:
+      tags: [Security & Audit]
+      summary: "List recent security audit events (coordinator only)"
+      operationId: "securityAuditEventsIndex"
+      security:
+        - BearerSanctumAuth: []
+      parameters:
+        - name: event_type
+          in: query
+          schema:
+            type: string
+            enum: [bola_blocked, bfla_blocked, rate_limit_exceeded, mass_assignment_blocked, payload_too_large, login_failed, session_revoked]
+        - name: severity
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 25
+      responses:
+        '200':
+          description: "Security audit events retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SecurityAuditEvent"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /security/posture:
+    get:
+      tags: [Security & Audit]
+      summary: "Get security hardening posture (coordinator only)"
+      operationId: "securityPosture"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Security posture retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/SecurityPosture"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /performance/metrics:
+    get:
+      tags: [Performance & Resilience]
+      summary: "Get live performance metrics and recent benchmark runs (coordinator only)"
+      operationId: "performanceMetrics"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Performance metrics retrieved successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PerformanceMetrics"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /performance/benchmarks/run:
+    post:
+      tags: [Performance & Resilience]
+      summary: "Execute a controlled benchmark scenario (coordinator only)"
+      operationId: "performanceRunBenchmark"
+      security:
+        - BearerSanctumAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PerformanceBenchmarkRequest"
+      responses:
+        '200':
+          description: "Benchmark completed successfully"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/PerformanceBenchmarkRun"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '503':
+          description: "Benchmark runner disabled (PERF_ALLOW_BENCHMARK_RUNNER=false)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+  /docs/openapi.yaml:
+    get:
+      tags: [Developer Documentation]
+      summary: "Download the OpenAPI 3.1.0 specification as YAML"
+      operationId: "docsOpenApiYaml"
+      responses:
+        '200':
+          description: "OpenAPI 3.1.0 YAML specification"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/yaml:
+              schema:
+                type: string
+        '304':
+          description: "Not Modified"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '406':
+          description: "Not Acceptable (if Accept header is not application/yaml compatible)"
+  /docs/openapi.json:
+    get:
+      tags: [Developer Documentation]
+      summary: "Get the OpenAPI 3.1.0 specification as JSON"
+      operationId: "docsOpenApiJson"
+      responses:
+        '200':
+          description: "OpenAPI 3.1.0 JSON specification"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                description: "Parsed OpenAPI 3.1.0 document"
+        '304':
+          description: "Not Modified"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+  /docs/portal:
+    get:
+      tags: [Developer Documentation]
+      summary: "Render the self-contained API developer portal (HTML5, zero CDN)"
+      operationId: "docsPortal"
+      responses:
+        '200':
+          description: "API documentation explorer"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+            Content-Security-Policy:
+              schema:
+                type: string
+          content:
+            text/html:
+              schema:
+                type: string
+  /docs/contract-audit:
+    get:
+      tags: [Developer Documentation]
+      summary: "Live contract parity audit report (coordinator only)"
+      operationId: "docsContractAudit"
+      security:
+        - BearerSanctumAuth: []
+      responses:
+        '200':
+          description: "Contract audit report"
+          headers:
+            X-API-Contract-Version:
+              schema:
+                type: string
+            X-OpenAPI-Spec:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiSuccessEnvelope"
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ContractAuditReport"
+        '401':
+          description: "Unauthenticated"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"
+        '403':
+          description: "Forbidden (not coordinator)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorEnvelope"

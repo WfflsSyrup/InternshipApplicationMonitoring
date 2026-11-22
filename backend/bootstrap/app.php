@@ -1,7 +1,9 @@
 <?php
 
+use App\Http\Middleware\ApiContractHeadersMiddleware;
 use App\Http\Middleware\PayloadSizeAndSanitizationMiddleware;
 use App\Http\Middleware\PerformanceTelemetryMiddleware;
+use App\Http\Middleware\RoleMiddleware;
 use App\Http\Middleware\SecurityHeadersMiddleware;
 use App\Support\ApiExceptionRenderer;
 use Illuminate\Foundation\Application;
@@ -20,10 +22,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(null);
 
         // Week 15 — Module 15 / SA9: hardening runs before any controller.
+        // Week 17 — Module 17 / SA11: contract headers for all API responses.
         $middleware->api(prepend: [
             SecurityHeadersMiddleware::class,
             PayloadSizeAndSanitizationMiddleware::class,
             PerformanceTelemetryMiddleware::class,
+            ApiContractHeadersMiddleware::class,
+        ]);
+
+        // Role middleware alias for route-level authorization
+        $middleware->alias([
+            'role' => RoleMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -7,8 +7,10 @@ import 'package:internship_monitor/core/network/api_client.dart';
 import 'package:internship_monitor/core/theme/app_theme.dart';
 import 'package:internship_monitor/core/widgets/app_shell.dart';
 import 'package:internship_monitor/models/user_model.dart';
+import 'package:internship_monitor/services/api_contract_service.dart';
 import 'package:internship_monitor/services/application_service.dart';
 import 'package:internship_monitor/services/auth_service.dart';
+import 'package:internship_monitor/services/automation_service.dart';
 import 'package:internship_monitor/services/crypto_service.dart';
 import 'package:internship_monitor/services/security_service.dart';
 import 'package:internship_monitor/state/auth_controller.dart';
@@ -45,6 +47,8 @@ Future<void> _pumpShell(WidgetTester tester, Size size) async {
         Provider<AuthService>(create: (_) => _FakeAuthService()),
         Provider<CryptoService>(create: (_) => CryptoService(ApiClient())),
         Provider<SecurityService>(create: (_) => SecurityService(ApiClient())),
+        Provider<AutomationService>(create: (_) => AutomationService(ApiClient())),
+        Provider<ApiContractService>(create: (_) => ApiContractService(ApiClient())),
         Provider<ApplicationService>(
           create: (BuildContext context) =>
               ApplicationService(context.read<ApiClient>()),

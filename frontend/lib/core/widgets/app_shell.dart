@@ -6,13 +6,16 @@ import '../../features/applications/application_form_screen.dart';
 import '../../features/applications/dashboard_screen.dart';
 import '../../features/applications/workflow_guide_screen.dart';
 import '../../features/automation/automation_monitor_screen.dart';
+import '../../features/contract/api_contract_portal_screen.dart';
 import '../../features/crypto/crypto_integration_screen.dart';
 import '../../features/security/security_audit_screen.dart';
 import '../../models/user_model.dart';
 import '../../services/application_service.dart';
+import '../../services/api_contract_service.dart';
 import '../../services/automation_service.dart';
 import '../../services/crypto_service.dart';
 import '../../services/security_service.dart';
+import '../../state/api_contract_controller.dart';
 import '../../state/application_list_controller.dart';
 import '../../state/auth_controller.dart';
 import '../../state/automation_monitor_controller.dart';
@@ -58,6 +61,11 @@ class AppShell extends StatelessWidget {
             service: context.read<SecurityService>(),
             canManage: user.isCoordinator,
           ),
+        ),
+        ChangeNotifierProvider<ApiContractController>(
+          create: (_) => ApiContractController(
+            service: context.read<ApiContractService>(),
+          )..load(),
         ),
       ],
       child: _AppShellView(user: user),
@@ -123,6 +131,14 @@ class _AppShellViewState extends State<_AppShellView> {
         icon: Icons.lock_rounded,
         label: 'Crypto',
         builder: CryptoIntegrationScreen.new,
+      ),
+    );
+
+    destinations.add(
+      const _Destination(
+        icon: Icons.code_rounded,
+        label: 'Contract',
+        builder: ApiContractPortalScreen.new,
       ),
     );
 

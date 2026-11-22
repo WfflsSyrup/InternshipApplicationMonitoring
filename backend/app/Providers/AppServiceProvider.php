@@ -17,6 +17,7 @@ use App\Services\ApplicationWorkflowService;
 use App\Services\Automation\AutomationDispatcherService;
 use App\Services\Automation\AutomationJobService;
 use App\Services\Automation\AutomationSweepService;
+use App\Services\Contract\OpenApiContractService;
 use App\Services\Crypto\EnvelopeCryptoService;
 use App\Services\Resilience\BenchmarkRunnerService;
 use App\Services\Resilience\CircuitBreakerService;
@@ -40,6 +41,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(SecurityAuditService::class);
         $this->app->singleton(CircuitBreakerService::class);
         $this->app->singleton(BenchmarkRunnerService::class);
+        $this->app->singleton(OpenApiContractService::class);
     }
 
     public function boot(): void

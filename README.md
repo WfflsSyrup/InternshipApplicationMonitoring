@@ -326,7 +326,61 @@ the browser tab, or keep a localhost-only `*` pattern while developing.
  
  ---
  
- ### Step 9 — Reset the demo data (optional)
+ ### Step 9 — Developer Documentation & Contract Governance (about 2 minutes)
+ 
+ Module 17 / SA11 adds a complete OpenAPI 3.1 contract specification, live parity auditing, and a
+ self-contained developer portal. All endpoints are documented with reusable schemas and security
+ schemes.
+ 
+ Sign in as the **coordinator** and open **Contract** in the navigation rail (desktop) or drawer
+ (narrow). The Contract screen fetches `GET /api/v1/docs/openapi.json` and renders:
+ 
+ | # | Do this | Expected |
+ | --- | --- | --- |
+ | 1 | Open **Contract** | Governance summary card: OpenAPI 3.1.0, Contract v1.4.0, Base URL, 29 Documented Endpoints |
+ | 2 | Search / Filter by Tag | Searchable, tag-filterable endpoint catalog with HTTP method badges, path, summary, auth scheme, status chips |
+ | 3 | Click any endpoint row | Expands to show parameters, request body example, response status codes, and a **Copy cURL** button with placeholder tokens |
+ | 4 | Click **Run Live Contract Parity Audit** (coordinator) | Green verification badges: `100% Route Parity`, `Zero-Secret Spec Clean` |
+ 
+ The public documentation portal is available at `GET /api/v1/docs/portal` — a zero-CDN, self-contained
+ HTML5 explorer with CSP headers. Raw spec endpoints:
+ 
+ - `GET /api/v1/docs/openapi.yaml` — YAML with `ETag` / `304 Not Modified`
+ - `GET /api/v1/docs/openapi.json` — JSON with `ETag` / `304 Not Modified`
+ - `GET /api/v1/docs/contract-audit` — Coordinator-only live parity report (`parity_passed`, `missing_from_spec`, `stale_in_spec`, `secret_scan_clean`)
+ 
+ Run the contract validation from CLI:
+ 
+ ```powershell
+ cd "C:\Users\Jeremy Jay\flutter_projects\InternshipMonitoring\backend"
+ php artisan openapi:validate-contract
+ ```
+ 
+ Expected output:
+ 
+ ```
+ Validating OpenAPI 3.1 contract..
+ 
+ ✓ Specification parsed successfully
+  OpenAPI version: 3.1.0
+  Info version: 1.4.0
+  Title: Internship Application Monitor API
+ 
+ Running route parity audit..
+  Documented operations: 29
+  Missing from spec: 0
+  Stale in spec: 0
+ ✓ Parity audit PASSED — 100% route alignment
+ 
+ Scanning specification for secrets..
+ ✓ Secret scan CLEAN — no live keys, passwords, or real PII found
+ 
+ 🎉 All contract validations PASSED
+ ```
+ 
+ ---
+ 
+ ### Step 10 — Reset the demo data (optional)
 
 `migrate:fresh` **deletes all data** and reseeds the controlled demo set:
 
@@ -427,6 +481,9 @@ Seeded records:
 | `PERF_CB_HALF_OPEN_PROBES` | `3` | Half-open probes before closing |
 | `PERF_DB_LATENCY_WARN_MS` | `50.0` | Deep health DB latency warning |
 | `PERF_CACHE_LATENCY_WARN_MS` | `10.0` | Deep health cache latency warning |
+| `CONTRACT_SPEC_PATH` | `openapi/project10-v1.openapi.yaml` | Path to OpenAPI 3.1 specification |
+| `CONTRACT_VERSION` | `1.4.0` | Contract version in `X-API-Contract-Version` header |
+| `CONTRACT_OPENAPI_VERSION` | `3.1.0` | OpenAPI spec version in `X-OpenAPI-Spec` header |
 
 ### Frontend (`frontend`)
 
@@ -449,7 +506,7 @@ memory for the session only.
 ### Automated tests
  
  ```powershell
- # backend — 62 feature tests (workflow, RBAC, validation, automation, crypto, OWASP hardening, performance)
+ # backend — 69 feature tests (workflow, RBAC, validation, automation, crypto, OWASP hardening, performance, contract)
  cd backend
  php artisan test
  
@@ -460,7 +517,7 @@ memory for the session only.
  flutter build web --release
  ```
  
- All three pass on the current codebase: **62 backend tests / 559 assertions** and **15 Flutter widget
+ All three pass on the current codebase: **69 backend tests / 659 assertions** and **15 Flutter widget
  tests**. The project is created with `--platforms=web` only, so `flutter build apk` is not
  available — Flutter Web is the deliverable target.
 

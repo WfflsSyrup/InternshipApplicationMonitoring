@@ -6,6 +6,7 @@ import 'core/network/api_client.dart';
 import 'core/theme/app_theme.dart';
 import 'core/widgets/app_shell.dart';
 import 'features/auth/login_screen.dart';
+import 'services/api_contract_service.dart';
 import 'services/application_service.dart';
 import 'services/auth_service.dart';
 import 'services/automation_service.dart';
@@ -38,6 +39,7 @@ class InternshipMonitorApp extends StatelessWidget {
         ),
         Provider<CryptoService>(create: (_) => CryptoService(apiClient)),
         Provider<SecurityService>(create: (_) => SecurityService(apiClient)),
+        Provider<ApiContractService>(create: (_) => ApiContractService(apiClient)),
         ChangeNotifierProvider<AuthController>(
           create: (BuildContext context) =>
               AuthController(authService: context.read<AuthService>()),

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\ApplicationController;
+use App\Http\Controllers\Api\V1\ApiDocsController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AutomationController;
 use App\Http\Controllers\Api\V1\HealthController;
@@ -86,4 +87,25 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function ():
         Route::get('/metrics', [PerformanceController::class, 'metrics']);
         Route::post('/benchmarks/run', [PerformanceController::class, 'runBenchmark']);
     });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Week 17 — Module 17 / SA11 Developer Documentation & Contract Audit
+|--------------------------------------------------------------------------
+|
+| Public: OpenAPI spec (YAML/JSON) and self-contained developer portal.
+| Coordinator only: Live contract parity audit report.
+|
+*/
+
+// Public docs endpoints (no auth required)
+Route::get('/docs/openapi.yaml', [ApiDocsController::class, 'openApiYaml']);
+Route::get('/docs/openapi.json', [ApiDocsController::class, 'openApiJson']);
+Route::get('/docs/portal', [ApiDocsController::class, 'portal']);
+
+// Coordinator-only contract audit
+Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function (): void {
+    Route::get('/docs/contract-audit', [ApiDocsController::class, 'contractAudit'])
+        ->middleware('role:coordinator');
 });
