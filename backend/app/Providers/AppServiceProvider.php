@@ -4,11 +4,13 @@ namespace App\Providers;
 
 use App\Models\AutomationJob;
 use App\Models\InternshipApplication;
+use App\Models\PerformanceBenchmarkRun;
 use App\Models\SecureIntegrationEnvelope;
 use App\Models\SecurityAuditEvent;
 use App\Models\User;
 use App\Policies\AutomationJobPolicy;
 use App\Policies\InternshipApplicationPolicy;
+use App\Policies\PerformanceBenchmarkRunPolicy;
 use App\Policies\SecureIntegrationEnvelopePolicy;
 use App\Policies\SecurityAuditEventPolicy;
 use App\Services\ApplicationWorkflowService;
@@ -16,6 +18,8 @@ use App\Services\Automation\AutomationDispatcherService;
 use App\Services\Automation\AutomationJobService;
 use App\Services\Automation\AutomationSweepService;
 use App\Services\Crypto\EnvelopeCryptoService;
+use App\Services\Resilience\BenchmarkRunnerService;
+use App\Services\Resilience\CircuitBreakerService;
 use App\Services\SecurityAuditService;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\JsonResponse;
@@ -34,6 +38,8 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(AutomationSweepService::class);
         $this->app->singleton(EnvelopeCryptoService::class);
         $this->app->singleton(SecurityAuditService::class);
+        $this->app->singleton(CircuitBreakerService::class);
+        $this->app->singleton(BenchmarkRunnerService::class);
     }
 
     public function boot(): void
@@ -42,6 +48,7 @@ class AppServiceProvider extends ServiceProvider
         Gate::policy(AutomationJob::class, AutomationJobPolicy::class);
         Gate::policy(SecureIntegrationEnvelope::class, SecureIntegrationEnvelopePolicy::class);
         Gate::policy(SecurityAuditEvent::class, SecurityAuditEventPolicy::class);
+        Gate::policy(PerformanceBenchmarkRun::class, PerformanceBenchmarkRunPolicy::class);
 
         $this->configureRateLimiters();
     }

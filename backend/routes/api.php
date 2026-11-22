@@ -5,11 +5,13 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\AutomationController;
 use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\PartnerReviewerController;
+use App\Http\Controllers\Api\V1\PerformanceController;
 use App\Http\Controllers\Api\V1\SecureIntegrationController;
 use App\Http\Controllers\Api\V1\SecurityAuditController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/health', [HealthController::class, 'show'])->name('health');
+Route::get('/health/deep', [HealthController::class, 'deep'])->name('health.deep');
 
 /*
 |--------------------------------------------------------------------------
@@ -75,5 +77,13 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function ():
     Route::prefix('security')->group(function (): void {
         Route::get('/audit-events', [SecurityAuditController::class, 'index']);
         Route::get('/posture', [SecurityAuditController::class, 'posture']);
+    });
+
+    /*
+    | Week 16 — Module 16 / SA10 performance & resilience (coordinator only).
+    */
+    Route::prefix('performance')->group(function (): void {
+        Route::get('/metrics', [PerformanceController::class, 'metrics']);
+        Route::post('/benchmarks/run', [PerformanceController::class, 'runBenchmark']);
     });
 });

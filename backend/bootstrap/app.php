@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\PayloadSizeAndSanitizationMiddleware;
+use App\Http\Middleware\PerformanceTelemetryMiddleware;
 use App\Http\Middleware\SecurityHeadersMiddleware;
 use App\Support\ApiExceptionRenderer;
 use Illuminate\Foundation\Application;
@@ -22,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(prepend: [
             SecurityHeadersMiddleware::class,
             PayloadSizeAndSanitizationMiddleware::class,
+            PerformanceTelemetryMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -57,8 +57,9 @@ class ApplicationWorkflowService
     public function transition(InternshipApplication $application, User $actor, array $data): InternshipApplication
     {
         $target = (string) $data['target_status'];
+        $expectedVersion = isset($data['expected_version']) ? (int) $data['expected_version'] : null;
 
-        return DB::transaction(function () use ($application, $actor, $data, $target): InternshipApplication {
+        return DB::transaction(function () use ($application, $actor, $data, $target, $expectedVersion): InternshipApplication {
             $locked = InternshipApplication::query()
                 ->whereKey($application->getKey())
                 ->lockForUpdate()
@@ -79,7 +80,30 @@ class ApplicationWorkflowService
             $this->applyStateChanges($locked, $actor, $from, $target, $data);
 
             $locked->status = $target;
-            $locked->save();
+
+            if ($expectedVersion !== null) {
+                $updatedRows = InternshipApplication::where('id', $locked->id)
+                    ->where('version', $expectedVersion)
+                    ->update(array_merge(
+                        ['status' => $target, 'version' => $expectedVersion + 1],
+                        $this->extractStateChanges($locked),
+                    ));
+
+                if ($updatedRows === 0) {
+                    $latest = InternshipApplication::find($locked->id);
+                    throw new InvalidStateTransitionException(
+                        'Conflict detected: this application was modified by another session. Reload the latest version and retry.',
+                        409,
+                        ['version' => ['version_conflict'], 'latest_version' => $latest?->version ?? 0],
+                    );
+                }
+
+                // Refresh the locked model to get the new version
+                $locked->refresh();
+            } else {
+                $locked->version = $locked->version + 1;
+                $locked->save();
+            }
 
             $log = $this->record($locked, $actor, $from, $target, $data['remarks'] ?? null);
 
@@ -87,6 +111,24 @@ class ApplicationWorkflowService
 
             return $locked->load('statusLogs.actor');
         });
+    }
+
+    /**
+     * Extract state changes from the locked application for CAS update.
+     */
+    private function extractStateChanges(InternshipApplication $application): array
+    {
+        $changes = [];
+
+        $fillable = $application->getFillable();
+        foreach ($fillable as $field) {
+            if ($field === 'version' || $field === 'id' || $field === 'status') {
+                continue;
+            }
+            $changes[$field] = $application->getAttribute($field);
+        }
+
+        return $changes;
     }
 
     private function assertTransitionPayload(InternshipApplication $application, User $actor, string $from, string $target, array $data): void

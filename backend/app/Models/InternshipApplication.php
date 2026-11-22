@@ -22,6 +22,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
     'target_start_date',
     'requirements_checklist',
     'status',
+    'version',
     'interview_schedule',
     'interview_notes',
     'placement_confirmed_at',
@@ -112,6 +113,7 @@ class InternshipApplication extends Model
             'interview_schedule' => 'datetime',
             'placement_confirmed_at' => 'datetime',
             'placement_acknowledged_at' => 'datetime',
+            'version' => 'integer',
         ];
     }
 

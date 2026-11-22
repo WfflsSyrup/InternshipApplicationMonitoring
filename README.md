@@ -273,8 +273,60 @@ flutter run -d chrome --web-port 5000 --dart-define=API_BASE_URL=http://127.0.0.
 the browser tab, or keep a localhost-only `*` pattern while developing.
 
 ---
-
-### Step 8 — Reset the demo data (optional)
+ 
+ ### Step 8 — Performance benchmarking & concurrency control (about 3 minutes)
+ 
+ Module 16 / SA10 adds deterministic benchmarking, optimistic concurrency control, a circuit breaker
+ for the automation dispatcher and a deep health endpoint. These are coordinator-only endpoints.
+ 
+ Sign in as the **coordinator** and open **Performance** in the navigation rail (desktop) or drawer
+ (narrow).
+ 
+ | # | Do this | Expected |
+ | --- | --- | --- |
+ | 1 | Open **Performance** | Live metrics card with rolling p50/p95/p99, query count, throughput, circuit breaker state |
+ | 2 | **Run Benchmark** → *Read pipeline indexed* → **Run** | SLO pass/fail card, persisted run with `correlation_id`, `p95_ms` < 150 ms target |
+ | 3 | **Run Benchmark** → *Burst mixed workload* → **Run** | Mixed read/write SLO card; conflicts counted separately from errors |
+ | 4 | **Run Benchmark** → *Optimistic concurrency race* → **Run** | Race simulation with version conflicts; first write succeeds, rest return `409` |
+ 
+ The benchmark runner is gated by `PERF_ALLOW_BENCHMARK_RUNNER=true` in `backend\.env`; production must
+ keep it `false`, which makes `POST /api/v1/performance/benchmarks/run` return `503`. Results are
+ persisted to `performance_benchmark_runs` with SLO evaluation:
+ 
+ ```powershell
+ cd "C:\Users\Jeremy Jay\flutter_projects\InternshipMonitoring\backend"
+ # Enable benchmark runner for the demo
+ $env:PERF_ALLOW_BENCHMARK_RUNNER="true"
+ php artisan serve --port=8010
+ ```
+ 
+ SLO targets (override with `PERF_SLO_*` env keys):
+ 
+ | Metric | Default target |
+ | --- | --- |
+ | `p50_ms` | ≤ 50 ms |
+ | `p95_ms` | ≤ 150 ms |
+ | `p99_ms` | ≤ 300 ms |
+ | `avg_queries_per_req` | ≤ 8 |
+ | `throughput_rps_min` | ≥ 20 req/s |
+ 
+ **Optimistic concurrency control**: every `PUT /applications/{id}` and `POST /applications/{id}/transition`
+ accepts an optional `expected_version`. When provided, the update is a compare-and-swap — if another
+ session modified the record first, the request returns `409 Conflict` with `version_conflict` and the
+ latest version so the client can reload and retry. The `version` column is incremented on every
+ successful mutation.
+ 
+ **Circuit breaker**: the automation dispatcher is wrapped in a three-state breaker (closed → open →
+ half-open). Five consecutive dispatcher failures open the breaker; subsequent calls fail fast with
+ `circuit_open`. After 60 seconds the breaker probes with three half-open requests; success closes
+ it, failure re-opens it. State is visible in the Performance screen and at `GET /api/v1/health/deep`.
+ 
+ **Deep health**: `GET /api/v1/health/deep` reports component-level health for database (latency),
+ cache (latency), circuit breaker (state) and automation dead letter queue (manual review count).
+ 
+ ---
+ 
+ ### Step 9 — Reset the demo data (optional)
 
 `migrate:fresh` **deletes all data** and reseeds the controlled demo set:
 
@@ -318,6 +370,11 @@ Seeded records:
 | Login shows "Too many requests" | 6th attempt within a minute from the same e-mail | Expected: `auth-login` allows 5/min. Wait for `Retry-After` |
 | Security screen is empty for a coordinator | No audit events recorded yet, or a 403/429 never happened | Trigger one (wrong password, cross-student open) and refresh |
 | Security screen shows no posture card | The coordinator call to `/security/posture` failed | Check `APP_DEBUG` (posture reports it) and the API console for a `403`/`503` |
+| **Run Benchmark** returns `503` | `PERF_ALLOW_BENCHMARK_RUNNER` is `false` | Set it to `true` in `backend\.env`, restart `php artisan serve` |
+| Benchmark SLO fails | SQLite in-memory DB in tests has higher query counts | Adjust `PERF_SLO_AVG_QUERIES` for test environment, or run against MySQL |
+| `X-Response-Time-Ms` header missing | Performance telemetry middleware not registered | Ensure `PerformanceTelemetryMiddleware` is in the `api` middleware stack in `bootstrap/app.php` |
+| Circuit breaker shows `open` | 5+ consecutive dispatcher failures | Wait for `PERF_CB_OPEN_TTL_SECONDS` (60s) or call `CircuitBreakerService::reset()` |
+| `GET /api/v1/health/deep` returns `unhealthy` | DB latency > `PERF_DB_LATENCY_WARN_MS` or cache latency > `PERF_CACHE_LATENCY_WARN_MS` | Check database and Redis connectivity; thresholds are conservative for demo |
 
 ---
 
@@ -356,6 +413,20 @@ Seeded records:
 | `SECURITY_AUTH_LOGIN_PER_MIN` | `5` | `auth-login` limiter |
 | `SECURITY_API_STANDARD_PER_MIN` | `60` | `api-standard` limiter |
 | `SECURITY_WEBHOOK_PER_MIN` | `30` | `integration-webhook` limiter |
+| `PERF_ALLOW_BENCHMARK_RUNNER` | `false` | Enables coordinator benchmark endpoint; keep `false` in production |
+| `PERF_SLO_P50_MS` | `50.0` | SLO target for p50 latency (ms) |
+| `PERF_SLO_P95_MS` | `150.0` | SLO target for p95 latency (ms) |
+| `PERF_SLO_P99_MS` | `300.0` | SLO target for p99 latency (ms) |
+| `PERF_SLO_AVG_QUERIES` | `8.0` | SLO target for average queries per request |
+| `PERF_SLO_RPS_MIN` | `20.0` | SLO target for minimum throughput (req/s) |
+| `PERF_SLOW_THRESHOLD_MS` | `150.0` | Telemetry slow-call threshold (ms) |
+| `PERF_QUERY_BUDGET` | `8` | Telemetry query budget per request |
+| `PERF_ROLLING_WINDOW_SECONDS` | `300` | Rolling window for in-cache metrics |
+| `PERF_CB_FAILURE_THRESHOLD` | `5` | Consecutive failures to open circuit breaker |
+| `PERF_CB_OPEN_TTL_SECONDS` | `60` | Time-to-live for open state |
+| `PERF_CB_HALF_OPEN_PROBES` | `3` | Half-open probes before closing |
+| `PERF_DB_LATENCY_WARN_MS` | `50.0` | Deep health DB latency warning |
+| `PERF_CACHE_LATENCY_WARN_MS` | `10.0` | Deep health cache latency warning |
 
 ### Frontend (`frontend`)
 
@@ -376,22 +447,22 @@ memory for the session only.
 ## Verification
 
 ### Automated tests
-
-```powershell
-# backend — 55 feature tests (workflow, RBAC, validation, automation, crypto, OWASP hardening)
-cd backend
-php artisan test
-
-# frontend — static analysis, widget tests, release build
-cd frontend
-flutter analyze
-flutter test          # login, shell layouts 1280px/420px, automation, crypto, security audit
-flutter build web --release
-```
-
-All three pass on the current codebase: **55 backend tests / 473 assertions** and **15 Flutter widget
-tests**. The project is created with `--platforms=web` only, so `flutter build apk` is not
-available — Flutter Web is the deliverable target.
+ 
+ ```powershell
+ # backend — 62 feature tests (workflow, RBAC, validation, automation, crypto, OWASP hardening, performance)
+ cd backend
+ php artisan test
+ 
+ # frontend — static analysis, widget tests, release build
+ cd frontend
+ flutter analyze
+ flutter test          # login, shell layouts 1280px/420px, automation, crypto, security audit
+ flutter build web --release
+ ```
+ 
+ All three pass on the current codebase: **62 backend tests / 559 assertions** and **15 Flutter widget
+ tests**. The project is created with `--platforms=web` only, so `flutter build apk` is not
+ available — Flutter Web is the deliverable target.
 
 ### Adverse-path checklist
 
@@ -448,6 +519,9 @@ Every response uses one envelope:
 | POST | `/api/v1/integrations/verify-simulation` | coordinator | Controlled rejection-path lab (`503` when disabled) |
 | GET | `/api/v1/security/audit-events` | coordinator | Recent audit events (`?event_type=`, `?severity=`, `per_page <= 50`) |
 | GET | `/api/v1/security/posture` | coordinator | Active hardening configuration (no secrets) |
+| GET | `/api/v1/health/deep` | coordinator | Component-level health (DB, cache, circuit breaker, automation DLQ) |
+| GET | `/api/v1/performance/metrics` | coordinator | Rolling telemetry + recent benchmark runs |
+| POST | `/api/v1/performance/benchmarks/run` | coordinator | Execute controlled benchmark (`503` when disabled) |
 
 Listing scope: coordinators see everything, students see their own, advisers see assigned
 applications plus same-department students, partner reviewers see their assigned applications
@@ -639,36 +713,42 @@ InternshipMonitoring/
 │   │   │            CryptoRotateEnvelopesCommand, PruneIntegrationNoncesCommand}.php
 │   │   ├── Http/{Controllers/Api/V1, Requests, Resources}/
 │   │   ├── Http/Middleware/{SecurityHeadersMiddleware,
-│   │   │            PayloadSizeAndSanitizationMiddleware}.php
+│   │   │            PayloadSizeAndSanitizationMiddleware,
+│   │   │            PerformanceTelemetryMiddleware}.php
 │   │   ├── Models/{User, InternshipApplication, ApplicationStatusLog, AutomationJob,
-│   │   │          SecureIntegrationEnvelope, UsedIntegrationNonce, SecurityAuditEvent}.php
+│   │   │          SecureIntegrationEnvelope, UsedIntegrationNonce, SecurityAuditEvent,
+│   │   │          PerformanceBenchmarkRun}.php
 │   │   ├── Policies/{InternshipApplicationPolicy, AutomationJobPolicy,
-│   │   │            SecureIntegrationEnvelopePolicy, SecurityAuditEventPolicy}.php
+│   │   │            SecureIntegrationEnvelopePolicy, SecurityAuditEventPolicy,
+│   │   │            PerformanceBenchmarkRunPolicy}.php
 │   │   ├── Services/{ApplicationWorkflowService, Automation/{AutomationJobService,
 │   │   │            AutomationDispatcherService, AutomationSweepService},
-│   │   │            Crypto/EnvelopeCryptoService, SecurityAuditService}.php
+│   │   │            Crypto/EnvelopeCryptoService, SecurityAuditService,
+│   │   │            Resilience/{BenchmarkRunnerService, CircuitBreakerService}}.php
 │   │   ├── Support/{ApiResponse, ApiExceptionRenderer, ApplicationStatusMachine,
 │   │   │          Automation/{LogSanitizer, AutomationRecipientResolver},
 │   │   │          Crypto/CryptoLogSanitizer}.php
 │   │   └── Exceptions/{InvalidStateTransitionException, Crypto/{CryptoConfigurationException,
 │   │              CryptoVerificationException}}.php
-│   ├── config/{automation.php, crypto.php, security.php}
+│   ├── config/{automation.php, crypto.php, security.php, performance.php}
 │   ├── database/{migrations,seeders,factories}/
 │   ├── routes/{api.php, console.php}
 │   └── tests/Feature/{InternshipApplicationWorkflowTest, Week13AutomationWorkflowTest,
-│           Week14CryptographicIntegrationTest, Week15SecurityHardeningTest}.php
+│           Week14CryptographicIntegrationTest, Week15SecurityHardeningTest,
+│           Week16PerformanceResilienceTest}.php
 ├── frontend/     # Flutter Web client
 │   └── lib/
 │       ├── core/{config, network, theme, utils, widgets}/
-│       ├── features/{auth, applications, automation, crypto, security}/
+│       ├── features/{auth, applications, automation, crypto, security, performance}/
 │       ├── models/{automation_job_model, automation_sweep_result, crypto_envelope_model,
 │       │           crypto_keyring_model, crypto_simulation_result, security_audit_event_model,
-│       │           security_posture_model}.dart
+│       │           security_posture_model, performance_benchmark_run_model,
+│       │           performance_metrics_model}.dart
 │       ├── services/{application_service, auth_service, automation_service, crypto_service,
-│       │             security_service}.dart
+│       │             security_service, performance_service}.dart
 │       ├── state/{auth_controller, application_list_controller, application_detail_controller,
 │       │          automation_monitor_controller, crypto_integration_controller,
-│       │          security_audit_controller}.dart
+│       │          security_audit_controller, performance_resilience_controller}.dart
 │       └── main.dart
 └── README.md
 ```
@@ -713,17 +793,18 @@ produced by `ErrorStateView`.
 ---
 
 ## Deliberate scope boundary
-
-**Implemented now:** Sanctum token authentication, policy-based RBAC, the complete bounded
-lifecycle with an append-only audit trail, standardized JSON envelopes with safe exception
-rendering, a controlled anonymized seeder, scheduled automation sweeps with bounded retries and
-coordinator recovery (Week 13 / Module 13 · SA7), AES-256-GCM payload protection with detached
-HMAC-SHA256 request signing and replay protection (Week 14 / Module 14 · SA8), OWASP API Top 10
-hardening with security telemetry (Week 15 / Module 15 · SA9), and the responsive Flutter Web client
-with all eight mandatory UI states.
-
-**Intentionally deferred (Week 16–18):** k6 / JMeter load-testing scripts and concurrency
-benchmarks, OpenAPI YAML generation and portal publishing, UAT report templates and sign-off.
+ 
+ **Implemented now:** Sanctum token authentication, policy-based RBAC, the complete bounded
+ lifecycle with an append-only audit trail, standardized JSON envelopes with safe exception
+ rendering, a controlled anonymized seeder, scheduled automation sweeps with bounded retries and
+ coordinator recovery (Week 13 / Module 13 · SA7), AES-256-GCM payload protection with detached
+ HMAC-SHA256 request signing and replay protection (Week 14 / Module 14 · SA8), OWASP API Top 10
+ hardening with security telemetry (Week 15 / Module 15 · SA9), **performance benchmarking,
+ optimistic concurrency control, circuit breakers and deep health probes (Week 16 / Module 16 · SA10)**,
+ and the responsive Flutter Web client with all mandatory UI states.
+ 
+ **Intentionally deferred (Week 17–18):** k6 / JMeter load-testing scripts and concurrency
+ benchmarks, OpenAPI YAML generation and portal publishing, UAT report templates and sign-off.
 
 Each can be added without refactoring: the dispatcher already writes to a structured log or an HTTP
 endpoint selected by `AUTOMATION_DISPATCHER_MODE`, the rate limiters and hardening middlewares are

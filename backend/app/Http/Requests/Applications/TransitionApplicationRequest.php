@@ -29,6 +29,7 @@ class TransitionApplicationRequest extends FormRequest
             'partner_reviewer_id' => ['nullable', 'integer', Rule::exists('users', 'id')],
             'interview_schedule' => ['nullable', 'date'],
             'interview_notes' => ['nullable', 'string', 'max:2000'],
+            'expected_version' => ['nullable', 'integer', 'min:1'],
         ];
     }
 

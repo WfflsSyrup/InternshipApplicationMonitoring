@@ -35,6 +35,7 @@ class InternshipApplicationResource extends JsonResource
             'placement_acknowledged_at' => optional($this->placement_acknowledged_at)->toIso8601String(),
             'created_at' => optional($this->created_at)->toIso8601String(),
             'updated_at' => optional($this->updated_at)->toIso8601String(),
+            'version' => (int) $this->version,
             'student' => new UserResource($this->whenLoaded('student')),
             'adviser' => new UserResource($this->whenLoaded('adviser')),
             'partner_reviewer' => new UserResource($this->whenLoaded('partnerReviewer')),
